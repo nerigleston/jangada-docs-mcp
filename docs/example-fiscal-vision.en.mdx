@@ -1,0 +1,67 @@
+---
+title: "Example: Fiscal Vision"
+description: "Reads invoices and receipts from photos: extracts structured data via vision, detects regions, and checks the item sum with tools."
+---
+
+An invoice/receipt reader from **photos**: it extracts the data as structured
+JSON via vision, detects regions in the image, and checks the item sum against
+the printed total using tools. It combines vision + structured output + function
+calling in a single pipeline.
+
+**Folder:** `pocs/fiscal-vision` · **Suggested port:** `8002`
+
+## jangada features
+
+- `Image.from_bytes()` — loads the uploaded image
+- `llm.aparse(prompt, Schema, images=[...])` — structured output via vision
+- `adetect_objects()` — region detection (bounding boxes)
+- Tools with `tool_choice="required"` — forces the sum check
+- `Document` + `complete(..., files=[doc])` — PDF/XLSX/CSV reports
+
+## Core of the example
+
+The invoice schema (`app/schemas/nota.py`):
+
+```python
+class NotaFiscal(BaseModel):
+    estabelecimento: str | None = Field(default=None)
+    cnpj: str | None = Field(default=None)
+    data: str | None = Field(default=None)
+    itens: list[ItemNota] = Field(default_factory=list)
+    total_informado: float | None = Field(default=None, description="Total printed on the invoice")
+```
+
+Vision extraction (`app/routers/fiscal.py`):
+
+```python
+from jangada_ai import Image
+
+@router.post("/extrair", response_model=NotaFiscal)
+async def extract(file: UploadFile = File(...)) -> NotaFiscal:
+    """Extracts the invoice data via VISION + structured output."""
+    llm = vision_llm(provider, model)
+    img = Image.from_bytes(await file.read(), file.content_type or "image/jpeg")
+    with observability_session(name="extract-invoice", metadata={"file": file.filename}):
+        comp = await llm.aparse(PROMPT_NOTA, NotaFiscal, images=[img])
+    return coerce(comp, NotaFiscal)   # coercion fallback over comp.parsed/comp.text
+```
+
+## Things to watch
+
+- **`parse()` returns a `Completion`** — the Pydantic object lives in
+  `comp.parsed`. The POC's `coerce()` handles the `parsed=None` case by falling
+  back to `Model.model_validate_json(comp.text)`.
+- Set a **generous `max_tokens`** for invoices with many items, or the JSON gets
+  truncated (see [Parameters](/docs/parameters)).
+- `default=None` fields keep the model from inventing missing data.
+
+## How to run
+
+```bash
+cd pocs/fiscal-vision
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8002   # http://localhost:8002/docs
+```
+
+See [Vision](/docs/vision), [Structured output](/docs/structured-output),
+[Detection](/docs/detect) and [Documents](/docs/documents).

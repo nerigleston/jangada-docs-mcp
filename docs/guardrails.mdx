@@ -1,0 +1,96 @@
+---
+title: "Guardrails de escopo"
+description: "ScopeGuard mantém a LLM dentro de um domínio e barra falas indesejadas — blocklist + classificador (judge LLM). Recusa via Completion, em input e/ou output, sync e async. Python puro, sem dependência nova."
+---
+
+Guardrails mantêm a LLM **dentro de um domínio** — para que ela não vire um
+assistente que responde qualquer coisa — e **barram falas** indesejadas. É uma
+camada fina de composição (Python puro, sem dep nova): reusa `Message`/`Completion`
+e o próprio `parse` da lib.
+
+Um guardrail intercepta a chamada em dois pontos:
+
+- **input** — antes de chamar o modelo principal (valida o pedido do usuário);
+- **output** — depois da resposta (valida o que o modelo respondeu).
+
+Quando barra, o cliente **curto-circuita** e devolve um `Completion` com a
+mensagem de recusa (`message=`) — no caso de input, nem chega a gastar o modelo
+principal. Com `raise_on_block=True`, levanta `GuardrailError` no lugar.
+
+## ScopeGuard
+
+Combina dois mecanismos, do barato ao robusto:
+
+1. **blocklist** (regex/termos) — barra na hora, sem custo nem LLM;
+2. **classificador de escopo** (LLM-as-judge) — um `judge=LLM(...)` barato
+   decide, via structured output, se o texto pertence ao escopo descrito.
+
+```python
+from jangada_ai import LLM, ScopeGuard
+
+guard = ScopeGuard(
+    scope=(
+        "Suporte do sistema e-Gestor: notas fiscais, financeiro, cadastros. "
+        "NÃO responde sobre outros assuntos (receitas, política, código, etc.)."
+    ),
+    judge=LLM("groq", "llama-3.1-8b"),   # modelo barato/rápido só pra classificar
+    block=[r"\bsenha\b", "ignore as instruções"],  # barra na hora, sem LLM
+    message="Desculpe, só posso ajudar com assuntos do e-Gestor.",
+    check="both",                         # "input" (padrão), "output" ou "both"
+)
+
+llm = LLM("openai", "gpt-4o", guardrails=[guard])
+
+llm.complete("como emito uma NF-e?")        # dentro do escopo -> responde normal
+llm.complete("me ensina a fazer um bolo")   # fora -> Completion com a recusa
+```
+
+A recusa vem como um `Completion` normal (`comp.text == message`), com
+`comp.cost is None` e `comp.raw == {"guardrail": "<motivo>"}` para inspeção.
+
+## Parâmetros
+
+| Parâmetro | Função |
+|---|---|
+| `scope` | Descrição em texto do que é permitido (usada pelo judge). |
+| `judge` | `LLM` barato que classifica o escopo. Se omitido, usa o modelo principal. |
+| `block` | Lista de regex/termos que barram na hora, sem chamar LLM. |
+| `message` | Texto da recusa devolvido quando barra. |
+| `check` | `"input"` (padrão), `"output"` ou `"both"`. |
+| `instruction` | Sobrescreve a instrução do classificador. |
+| `raise_on_block` | `True` levanta `GuardrailError` em vez de recusar. |
+| `fail_closed` | Se o judge falhar/for inconclusivo: `True` barra (seguro), `False` (padrão) libera. |
+
+## Recomendações
+
+- **Use um `judge` separado e barato** (ex.: `llama-3.1-8b`, `gpt-4.1-nano`,
+  `gemini-2.5-flash-lite`): a classificação é por chamada, então um modelo pequeno
+  derruba o custo. Sem `judge`, o próprio modelo principal classifica (a recursão
+  é evitada internamente, mas fica mais caro).
+- **A blocklist é grátis**: ponha nela os termos/frases óbvios e deixe o judge
+  para o julgamento de tema.
+- **Custo**: input barrado **não** gasta o modelo principal. Output barrado já
+  pagou a geração (a recusa só substitui o texto).
+
+## Onde se aplica
+
+- `complete`/`acomplete` e `parse`/`aparse`: input **e** output.
+- `stream`/`astream`: apenas **input** (o guard de output exigiria bufferizar o
+  stream inteiro). Se barrado, o stream emite só a mensagem de recusa.
+
+## Guardrail customizado
+
+`ScopeGuard` cobre o caso comum, mas você pode escrever o seu herdando de
+`Guardrail` e sobrescrevendo `check_input`/`check_output` (e as versões `a*`),
+retornando `GuardResult(ok, reason)`:
+
+```python
+from jangada_ai import Guardrail, GuardResult
+
+class MaxLength(Guardrail):
+    message = "Mensagem longa demais."
+    def __init__(self, limite): self.limite = limite
+    def check_input(self, messages, judge):
+        texto = " ".join(m.content for m in messages if isinstance(m.content, str))
+        return GuardResult(len(texto) <= self.limite, "excedeu o limite")
+```

@@ -1,0 +1,67 @@
+---
+title: "Exemplo: Fiscal Vision"
+description: "Lê notas e cupons fiscais a partir de fotos: extrai dados estruturados por visão, detecta regiões e confere a soma dos itens com ferramentas."
+---
+
+Um leitor de documentos fiscais a partir de **fotos**: extrai os dados em JSON
+estruturado por visão, detecta regiões na imagem e confere a soma dos itens
+contra o total impresso usando ferramentas. Combina vision + structured output +
+function calling num pipeline só.
+
+**Pasta:** `pocs/fiscal-vision` · **Porta sugerida:** `8002`
+
+## Recursos da jangada
+
+- `Image.from_bytes()` — carrega a imagem do upload
+- `llm.aparse(prompt, Schema, images=[...])` — structured output por visão
+- `adetect_objects()` — detecção de regiões (bounding boxes)
+- Tools com `tool_choice="required"` — força a conferência da soma
+- `Document` + `complete(..., files=[doc])` — relatórios PDF/XLSX/CSV
+
+## Núcleo do exemplo
+
+Schema da nota (`app/schemas/nota.py`):
+
+```python
+class NotaFiscal(BaseModel):
+    estabelecimento: str | None = Field(default=None)
+    cnpj: str | None = Field(default=None)
+    data: str | None = Field(default=None)
+    itens: list[ItemNota] = Field(default_factory=list)
+    total_informado: float | None = Field(default=None, description="Total impresso na nota")
+```
+
+Extração por visão (`app/routers/fiscal.py`):
+
+```python
+from jangada_ai import Image
+
+@router.post("/extrair", response_model=NotaFiscal)
+async def extrair(file: UploadFile = File(...)) -> NotaFiscal:
+    """Extrai os dados da nota por VISÃO + structured output."""
+    llm = vision_llm(provider, model)
+    img = Image.from_bytes(await file.read(), file.content_type or "image/jpeg")
+    with observability_session(name="extrair-nota", metadata={"arquivo": file.filename}):
+        comp = await llm.aparse(PROMPT_NOTA, NotaFiscal, images=[img])
+    return coerce(comp, NotaFiscal)   # fallback de coerção sobre comp.parsed/comp.text
+```
+
+## Pontos de atenção
+
+- **`parse()` retorna `Completion`** — o objeto Pydantic está em `comp.parsed`.
+  O `coerce()` da POC trata o caso de `parsed=None` caindo para
+  `Model.model_validate_json(comp.text)`.
+- Defina **`max_tokens` folgado** em notas com muitos itens, senão o JSON trunca
+  (veja [Parâmetros](/docs/parameters)).
+- Campos `default=None` evitam que o modelo invente dados ausentes.
+
+## Como rodar
+
+```bash
+cd pocs/fiscal-vision
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8002   # http://localhost:8002/docs
+```
+
+Veja [Vision](/docs/vision), [Structured output](/docs/structured-output),
+[Detecção](/docs/detect) e [Documentos](/docs/documents).

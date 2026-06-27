@@ -1,0 +1,62 @@
+---
+title: "Example: Personal assistant"
+description: "An agent that solves everyday tasks (math, date/time, Wikipedia) by deciding on its own which tools to call."
+---
+
+A virtual assistant that solves everyday tasks — conversions, math, date/time,
+Wikipedia lookups — **deciding on its own** which tools to call for each
+question. It's the most direct example of an `Agent` with tools.
+
+**Folder:** `pocs/assistente-pessoal` · **Suggested port:** `8000`
+
+## jangada features
+
+- `Agent` — automatic tool-calling loop
+- Prebuilt tools from `jangada_ai.prebuilt`: `calculator`, `current_datetime`,
+  `wikipedia_search`
+- `observability_session` — groups cost and iterations of the request
+
+## Core of the example
+
+`app/routers/assistente.py`:
+
+```python
+from jangada_ai import Agent
+from jangada_ai.prebuilt import calculator, current_datetime, wikipedia_search
+
+TOOLS = [calculator, current_datetime, wikipedia_search]
+
+@router.post("/perguntar", response_model=PerguntaResponse)
+async def ask(req: PerguntaRequest) -> PerguntaResponse:
+    """The assistant answers, deciding on its own which tools to use."""
+    llm = tools_llm(req.provider, req.model)
+    agent = Agent(
+        llm,
+        role="personal assistant",
+        goal="help with everyday tasks using the available tools",
+        backstory="You are a practical, to-the-point assistant. Use the tools "
+                  "whenever they give a more accurate answer.",
+        tools=TOOLS,
+    )
+    with observability_session(name="assistant", metadata={"message": req.mensagem}):
+        res = await anyio.to_thread.run_sync(agent.run, req.mensagem)
+    return PerguntaResponse(resposta=res.text, iteracoes=res.iterations, custo_usd=res.cost)
+```
+
+## Things to watch
+
+- `agent.run` is synchronous; in an async handler, run it in a thread with
+  `anyio.to_thread.run_sync` so you don't block the event loop.
+- Each tool's **docstring** is what the model reads to decide when to use it —
+  describe it well (see [Tools](/docs/tools)).
+
+## How to run
+
+```bash
+cd pocs/assistente-pessoal
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000   # http://localhost:8000/docs
+```
+
+See [Agents](/docs/agents), [Tools](/docs/tools) and
+[Observability](/docs/observability).

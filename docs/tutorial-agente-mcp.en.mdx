@@ -1,0 +1,76 @@
+---
+title: "Tutorial: MCP agent from scratch"
+description: "Goal: connect to an MCP (Model Context Protocol) server and let the model use the tools on its own — it decides which tool to call, jangada runs it and sends it back, until the..."
+---
+
+Goal: connect to an **MCP** (Model Context Protocol) server and let the model
+**use the tools on its own** — it decides which tool to call, jangada runs it
+and sends it back, until the final answer. Works on any provider (not just the
+ones with native MCP), because it uses ordinary tool calling.
+
+Install the extra (it brings the official `mcp` package):
+
+```bash
+pip install "jangada-ai[openai,mcp]"
+export OPENAI_API_KEY=sk-...
+```
+
+## 1. Connect to an MCP server
+
+`MCPClient` connects via **URL** (streamable-http) or **stdio** (subprocess):
+
+```python
+import asyncio
+from jangada_ai.mcp import MCPClient
+
+async def main():
+    async with MCPClient("https://your-mcp/mcp/") as mcp:     # remote
+        tools = await mcp.list_tools()
+        print([t.name for t in tools])
+
+asyncio.run(main())
+
+# stdio (local server as a subprocess):
+# async with MCPClient(command="python", args=["server.py"]) as mcp: ...
+```
+
+## 2. Run the agent
+
+`run_agent` does the full loop: lists the tools, sends them to the model,
+runs the calls and sends them back, until the final answer.
+
+```python
+from jangada_ai import LLM
+from jangada_ai.mcp import MCPClient, run_agent
+
+async def main():
+    llm = LLM("openai", "gpt-4o-mini")
+    async with MCPClient("https://your-mcp/mcp/") as mcp:
+        comp = await run_agent(llm, "What is the company's data?", client=mcp)
+        print(comp.text)
+
+asyncio.run(main())
+```
+
+The model picks the right tool (e.g. `obter_dados_empresa`), jangada runs it via
+MCP and returns the result to the model, which answers in natural language.
+
+## 3. Beyond tools: resources and prompts
+
+`MCPClient` covers all the MCP primitives:
+
+```python
+async with MCPClient("https://your-mcp/mcp/") as mcp:
+    texto = await mcp.resource_text("file:///guide.md")        # data/context from the server
+    msgs  = await mcp.prompt_messages("review", {"x": "..."})   # server template -> list[Message]
+    resp  = await llm.acomplete(None, history=msgs)
+```
+
+And **client** capabilities (the server calls back): `roots=[...]`,
+`sampling_llm=LLM(...)` (the server requests a generation from **your** LLM),
+`elicitation_callback`, `logging_callback`.
+
+## Next steps
+
+- Complete recipe: `examples/cookbook/02_agente_mcp.py`.
+- Detailed reference: [MCP](/en/docs/mcp) and [Tools](/en/docs/tools).

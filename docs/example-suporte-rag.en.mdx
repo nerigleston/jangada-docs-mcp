@@ -1,0 +1,78 @@
+---
+title: "Example: Support with RAG"
+description: "A support center that ingests a knowledge base (PDF/DOCX/CSV/XLSX) and answers with context; an agent decides when to search and a guardrail filters scope."
+---
+
+A support center that **ingests a knowledge base** (PDF/DOCX/CSV/XLSX) and
+answers customers with retrieved context. The highlight is the design: an `Agent`
+**decides on its own** whether to consult the base (RAG as a tool) or just
+answer, and a `ScopeGuard` blocks out-of-scope questions before processing.
+
+**Folder:** `pocs/suporte-rag` · **Suggested port:** `8001`
+
+## jangada features
+
+- `Document` + `RAG` + `vector_store()` — ingestion, chunking and hybrid search
+- `Agent` with RAG exposed as a **tool** (`buscar_na_base`)
+- `ScopeGuard` — scope guardrail with a judge, on input
+- `llm.astream()` — streaming response
+
+## Core of the example
+
+Ingestion (`app/routers/kb.py`):
+
+```python
+from jangada_ai import Document
+
+rag.add_document(Document(content, name=name), metadata={"source": name})
+```
+
+RAG as an agent tool (`app/routers/chat.py`):
+
+```python
+def buscar_na_base(query: str) -> str:
+    """Searches the company's knowledge base.
+
+    Use ONLY when the question requires specific facts, policies or products.
+    Do NOT use for greetings or small talk.
+    """
+    results = rag.search(query, k=k, mode="hybrid")   # hybrid search (RRF)
+    return "\n\n".join(f"[{i+1}] {r.chunk.content}" for i, r in enumerate(results))
+
+agent = Agent(
+    tools_llm(), role="virtual support agent",
+    goal="help the customer, deciding when to consult the knowledge base",
+    tools=[buscar_na_base],
+)
+res = agent.run(question, context=context or None)
+```
+
+Scope guardrail on the "gatekeeper":
+
+```python
+from jangada_ai import LLM, ScopeGuard
+
+guard = ScopeGuard(SCOPE, judge=judge, check="input", raise_on_block=True)
+gatekeeper = LLM(provider, model, max_tokens=16, guardrails=[guard], name="scope-gatekeeper")
+```
+
+## Things to watch
+
+- **Check scope once, on input**, with a cheap "gatekeeper" LLM — don't put
+  `ScopeGuard` on the iterating LLM (the history grows and re-evaluation may
+  reject a valid turn).
+- **Let the agent decide when to retrieve.** Greetings shouldn't trigger RAG;
+  that's why search is a tool, not a mandatory step.
+- Persistence is `memory` by default; point `DATABASE_URL_VECTOR` at
+  pgvector/Mongo in production.
+
+## How to run
+
+```bash
+cd pocs/suporte-rag
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8001   # http://localhost:8001/docs
+```
+
+See [RAG](/docs/rag), [Agents](/docs/agents), [Guardrails](/docs/guardrails) and
+[Documents](/docs/documents).

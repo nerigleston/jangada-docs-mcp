@@ -1,0 +1,51 @@
+---
+title: "Anthropic (Claude)"
+description: "Provider anthropic. Adapter over the anthropic SDK."
+---
+
+Provider `anthropic`. Adapter over the `anthropic` SDK.
+
+```bash
+pip install "jangada-ai[anthropic]"
+```
+
+- **`provider=`**: `"anthropic"`
+- **Environment variable**: `ANTHROPIC_API_KEY`
+
+```python
+from jangada_ai import LLM
+llm = LLM("anthropic", "claude-opus-4-8")
+```
+
+## What it does
+
+- **Text** and **streaming**.
+- **Structured output** (`parse`): via **tool-forcing** — it defines a tool
+  with the schema and pins `tool_choice`, then validates the `tool_use.input`
+  against the Pydantic model. (Claude has no `response_format` like OpenAI.)
+- **Vision** (`images=`): images become an `image` block with a base64 `source`.
+- **Documents** (`files=`): local text extraction.
+
+## What it does NOT do
+
+- **Audio transcription**: the Claude API **does not accept audio** — `transcribe()`
+  raises `UnsupportedError`. Use OpenAI, Groq, or Gemini for audio (and, if you
+  want, keep Claude as the text provider with audio fallback on another). See
+  [Audio transcription](/en/docs/audio).
+- **Object detection**: it works mechanically (vision + structured), but the
+  coordinate accuracy is lower than Gemini's.
+
+## Structure and quirks
+
+- **Parameters**: `temperature`, `max_tokens`, `top_p`, `top_k`, `stop`
+  (→ `stop_sequences`). It has **no** `seed` (it is dropped).
+- **`max_tokens` is required** in the Claude API — jangada already uses a default
+  (`1024`) when you don't provide one.
+- **System**: goes in the request's `system` field (not as a message).
+- **Response** (`Completion`): `usage` from native `input_tokens`/`output_tokens`;
+  `raw` with the SDK object.
+- **Errors**: 529 (overloaded) becomes `OverloadedError` (a subtype of `ServerError`),
+  eligible for retry/fallback. See [Errors](/en/docs/errors).
+
+Related: [Capability matrix](/en/docs/capabilities),
+[Structured output](/en/docs/structured-output).

@@ -1,0 +1,57 @@
+---
+title: "Retry and fallback"
+description: "jangada combines two defenses against API failures: retry with backoff on the same candidate and fallback to another model/provider."
+---
+
+jangada combines two defenses against API failures: **retry with backoff** on the
+same candidate and **fallback** to another model/provider.
+
+```python
+from jangada_ai import LLM
+
+primary = LLM("openai", "gpt-4o-mini")
+backup  = LLM("anthropic", "claude-haiku-4-5-20251001")
+
+llm = primary.with_fallback(backup)
+llm.complete("...")   # tries the primary (with retries); if it fails, goes to the backup
+```
+
+## How the ordering works
+
+Per candidate, the client tries `max_retries + 1` times with exponential backoff
+(with jitter) before falling through to the next candidate:
+
+```
+[primary] tries → retry → retry → failed ─▶ [backup] tries → retry → ...
+```
+
+- **Retry** happens on transient errors (`backoff_on`, default
+  `errors.TRANSIENT`: rate limit, timeout, connection, 5xx).
+- **Fallback** happens on `retry_on` errors (default `DEFAULT_FAILOVER`:
+  rate limit, timeout, connection, 5xx, **404**).
+- `NotFoundError` (404) does **not** retry on the same candidate, but it **does**
+  fall back.
+- `auth` and `bad_request` do **not** enter the default failover — they fail
+  immediately.
+
+## Parameters
+
+```python
+LLM(
+    "openai", "gpt-4o-mini",
+    max_retries=2,          # extra attempts per candidate
+    backoff_base=0.5,       # seconds
+    backoff_max=8.0,
+    jitter=True,
+    retry_on=None,          # default: errors.DEFAULT_FAILOVER
+    backoff_on=None,        # default: errors.TRANSIENT
+    fallbacks=[backup],
+)
+```
+
+Errors are normalized (with `status_code`) — see [Errors](/en/docs/errors). For the
+aggregated cost across candidates, see [Cost and tokens](/en/docs/cost).
+
+## Example
+
+`examples/fallback_example.py` — runnable script.

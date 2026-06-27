@@ -1,0 +1,66 @@
+---
+title: "Cost and tokens"
+description: "Every successful response comes back with usage (tokens) and cost (estimated USD)."
+---
+
+Every successful response comes back with `usage` (tokens) and `cost` (estimated USD).
+
+```python
+comp = llm.complete("...")
+print(comp.usage)   # {"input_tokens": ..., "output_tokens": ...}
+print(comp.cost)    # e.g.: 0.000123  (USD, approximate)
+```
+
+The client calls `pricing.compute_cost()` after each success and sets
+`Completion.cost`. `FlowResult` and `GraphResult` **aggregate** `usage`/`cost`
+along the chain.
+
+## Pricing table
+
+Prices live in `pricing.py` (approximate, per 1M tokens). You can
+register/adjust them:
+
+```python
+from jangada_ai import register_price, price_for
+
+register_price("my-model", 0.5, 1.5)   # USD per 1M tokens (input, output)
+print(price_for("gpt-4o-mini"))
+```
+
+> ⚠️ The values are **approximate** and serve for estimation/observability —
+> do not treat them as a billing source.
+
+## Multimodal cost
+
+- **Image (vision)**: there's no separate price — providers already count the
+  image's tokens inside `input_tokens`. Image cost already comes out of the normal
+  table.
+- **Audio (transcription)**: billed **per minute**, not per token. The cost only
+  appears when `usage` carries the duration (`audio_seconds`): pass
+  `response_format="verbose_json"` on transcription **or** set the duration on
+  `Audio.from_bytes(data, mime, duration=...)`. Register/adjust the per-minute
+  price with `register_audio_price`:
+
+  ```python
+  from jangada_ai import register_audio_price
+  register_audio_price("whisper-1", 0.006)   # USD per minute
+  ```
+- **Detection**: `detect_objects`/`adetect_objects` return only `list[Detection]`
+  (no cost). For the cost, use `detect_objects_full`/`adetect_objects_full`, which
+  return a `DetectionResult` with `.detections` **and** `.completion`/`.cost`/`.usage`:
+
+  ```python
+  from jangada_ai import detect_objects_full
+  res = detect_objects_full(llm, "photo.jpg")
+  print(res.detections, res.cost)
+  ```
+
+## Where this shows up
+
+- `Completion.cost` / `Completion.usage` on every call.
+- Aggregated totals in [Flows and Graph](/en/docs/flows).
+- In [Step-by-step debug](/en/docs/debug), the cost of each step is shown in the trace.
+
+## Example
+
+`examples/retry_cost_example.py` — runnable script.

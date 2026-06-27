@@ -1,0 +1,55 @@
+---
+title: "OpenAI"
+description: "Provider openai. Adapter over the openai SDK (chat.completions dialect)."
+---
+
+Provider `openai`. Adapter over the `openai` SDK (`chat.completions` dialect).
+
+```bash
+pip install "jangada-ai[openai]"
+```
+
+- **`provider=`**: `"openai"`
+- **Environment variable**: `OPENAI_API_KEY`
+- **Adapter base**: `_OpenAICompatible` (shared with Groq)
+
+```python
+from jangada_ai import LLM
+llm = LLM("openai", "gpt-4o-mini")
+```
+
+## What it does
+
+- **Text** (`complete`/`acomplete`) and **streaming** (`stream`/`astream`).
+- **Structured output** (`parse`): uses the native helper
+  `chat.completions.parse(response_format=Model)` → `.message.parsed`.
+- **Vision** (`images=`): images become `image_url` with a data URI.
+- **Documents** (`files=`): local text extraction (common to all).
+- **Object detection** (`detect_objects`): via vision + structured.
+- **Audio transcription** (`transcribe`): dedicated endpoint
+  `audio.transcriptions.create`. Models: `gpt-4o-transcribe`,
+  `gpt-4o-mini-transcribe`, `whisper-1`.
+
+## Structure and quirks
+
+- **Parameters**: accepts `temperature`, `max_tokens`, `top_p`, `stop`, `seed`.
+  It has **no** `top_k` (it is dropped).
+- **Model profile** (`profiles.py`): the `gpt-5` family rejects `temperature`
+  and uses `max_completion_tokens` instead of `max_tokens` — jangada normalizes
+  this automatically. See [Parameters and profiles](/en/docs/parameters).
+- **Response** (`Completion`): `text`, `usage` (`input_tokens`/`output_tokens`
+  derived from `prompt_tokens`/`completion_tokens`), `raw` with the native object.
+- **Errors**: translated by `errors.classify()` into the normalized hierarchy.
+
+## Structured example
+
+```python
+from pydantic import BaseModel
+class Person(BaseModel):
+    name: str; age: int
+
+llm.parse("Extract: João, 30 years old.", Person).parsed   # Person(name='João', age=30)
+```
+
+Related: [Capability matrix](/en/docs/capabilities), [Groq](/en/docs/llm-groq)
+(same dialect), [Audio transcription](/en/docs/audio).

@@ -1,0 +1,78 @@
+---
+title: "Tutorial: RAG do zero"
+description: "Objetivo: responder perguntas com base nos seus textos. A jangada faz embeddings + busca híbrida (BM25 lexical + vetorial, fundidos por RRF) + geração da resposta. Comece em..."
+---
+
+Objetivo: responder perguntas com base nos **seus** textos. A jangada faz
+embeddings + busca **híbrida** (BM25 lexical + vetorial, fundidos por RRF) +
+geração da resposta. Comece em memória (sem banco) e troque por um vector store
+real depois — sem mudar o resto.
+
+Instale o extra:
+
+```bash
+pip install "jangada-ai[openai,rag]"
+export OPENAI_API_KEY=sk-...
+```
+
+## 1. Montar o RAG
+
+Você precisa de um **embedder** (gera vetores), um **store** (guarda) e um
+**chat** (responde):
+
+```python
+from jangada_ai import LLM
+from jangada_ai.rag import RAG, InMemoryVectorStore
+
+embedder = LLM("openai", "text-embedding-3-small")
+chat     = LLM("openai", "gpt-4o-mini")
+
+rag = RAG(embedder, InMemoryVectorStore(), chat=chat, k=3, alpha=0.5)
+```
+
+- `k` — quantos trechos recuperar.
+- `alpha` — balanço da busca: `0` = só BM25 (palavras), `1` = só vetorial
+  (semântica), `0.5` = equilíbrio.
+
+## 2. Indexar conteúdo
+
+```python
+rag.add_texts([
+    "A jangada troca de provider mudando só LLM('provider', 'modelo').",
+    "O fallback é acionado em rate limit, 5xx ou timeout.",
+])
+
+# ou a partir de arquivos (docx/pdf/csv/xlsx/txt):
+rag.add_document("manual.pdf")
+```
+
+## 3. Perguntar
+
+```python
+resp = rag.ask("Como troco de provider?")
+print(resp.text)                 # resposta com base no contexto recuperado
+print(len(resp.sources), "trechos usados")
+```
+
+`ask()` recupera os trechos mais relevantes, monta o contexto e gera a resposta.
+`resp.sources` traz os trechos (com score) que embasaram.
+
+## 4. Indo para produção: vector store real
+
+Troque só o store — pgvector ou Mongo, detectado pela string de conexão:
+
+```python
+from jangada_ai.rag import vector_store
+
+store = vector_store("postgresql://user:pass@host/db")   # ou "mongodb+srv://..."
+rag = RAG(embedder, store, chat=chat)
+```
+
+O resto do código continua igual. Ajustes finos (`min_score`, `filter`, `weights`,
+`max_context_chars`) estão em [RAG](/docs/rag).
+
+## Próximos passos
+
+- Receita completa: `examples/cookbook/03_chatbot_rag.py`.
+- Referência detalhada: [RAG](/docs/rag).
+

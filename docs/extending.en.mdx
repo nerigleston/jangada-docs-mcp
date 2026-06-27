@@ -1,0 +1,63 @@
+---
+title: "Extending: adding a provider"
+description: "Each provider is an adapter that inherits from Provider and translates the normalized types to the native SDK."
+---
+
+Each provider is an *adapter* that inherits from `Provider` and translates the
+normalized types to the native SDK.
+
+## Steps
+
+1. Create `jangada/providers/<name>.py` with a class that inherits from
+   `Provider` and implements the 6 methods + `_build_client` /
+   `_build_async_client`.
+2. Define `name` and `env_key`.
+3. Import the SDK **only inside** the methods (lazy imports — invariant).
+4. Register it in `registry.py` with a lazy loader.
+5. Add the extra in `pyproject.toml`.
+
+## Contract (`Provider`)
+
+```python
+class Provider:
+    name: str
+    env_key: str | None
+
+    def _build_client(self) -> Any: ...
+    def _build_async_client(self) -> Any: ...
+    def complete(self, messages, **opts) -> Completion: ...
+    async def acomplete(self, messages, **opts) -> Completion: ...
+    def parse(self, messages, schema, **opts) -> Completion: ...
+    async def aparse(self, messages, schema, **opts) -> Completion: ...
+    def stream(self, messages, **opts) -> Iterator[str]: ...
+    def astream(self, messages, **opts) -> AsyncIterator[str]: ...
+```
+
+## Shortcut for the OpenAI dialect
+
+If the provider speaks `chat.completions` (OpenAI style), inherit from
+`_OpenAICompatible` and just adjust the attributes:
+
+```python
+class MyProvider(_OpenAICompatible):
+    name = "my"
+    env_key = "MY_API_KEY"
+    sdk_module = "my_sdk"
+    sync_class = "Client"
+    async_class = "AsyncClient"
+    supports_parse_helper = False   # True if it has a native .parse()
+```
+
+## Invariants to respect
+
+- **Lazy imports**: `import jangada_ai` must work without the SDK.
+- **Normalized types at the boundary**: outside the adapters only
+  `Message`/`Completion` circulate; native objects stay in `Completion.raw`.
+- **Always translate errors**: wrap SDK calls in `try/except` and re-raise via
+  `classify(e, self.name)` — see [Errors](/en/docs/errors).
+- **Sync/async parity**: every method has an `a*` version.
+- **Per-model quirks** go in `profiles.py` — see [Parameters](/en/docs/parameters).
+
+## Tests
+
+Use the `FakeProvider` pattern registered at runtime; see `tests/conftest.py`.

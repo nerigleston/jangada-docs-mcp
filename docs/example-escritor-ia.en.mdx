@@ -1,0 +1,73 @@
+---
+title: "Example: AI writer"
+description: "Rewrites, translates and summarizes text using templates and cache (exact + semantic) to save tokens on repeated calls."
+---
+
+A writing helper that rewrites text in different tones, translates and
+summarizes. The highlight is the **response cache** (exact and semantic):
+repeated (or paraphrased) calls don't pay the LLM again.
+
+**Folder:** `pocs/escritor-ia` · **Suggested port:** `8000`
+
+## jangada features
+
+- `LLM.complete()` with `{{ }}` templates
+- `ExactCache` — cache for identical prompts
+- `SemanticCache` — similarity cache (embeddings), catches paraphrases
+- `Completion.cost` — cost on the response
+
+## Core of the example
+
+Building the LLM with cache, falling back from `SemanticCache` → `ExactCache`
+(`app/routers/escritor.py`):
+
+```python
+from jangada_ai import LLM, ExactCache, SemanticCache, UnsupportedError
+
+def _cached_llm() -> LLM:
+    embed_key = s.api_key_for(s.embed_provider)
+    if embed_key:
+        embedder = LLM(s.embed_provider, s.embed_model, api_key=embed_key)
+        try:
+            cache = SemanticCache(embedder, threshold=0.45)
+        except UnsupportedError:
+            cache = ExactCache(max_size=512, ttl=3600)
+    else:
+        cache = ExactCache(max_size=512, ttl=3600)
+    return LLM(..., cache=cache, name="writer-cache")
+```
+
+Usage with a template:
+
+```python
+_TPL_REWRITE = (
+    "Rewrite the text below in a {{tone}} tone, preserving the meaning. "
+    "Reply ONLY with the rewritten text.\n\nText:\n{{text}}"
+)
+
+@router.post("/reescrever", response_model=Resultado)
+async def rewrite(req: ReescreverRequest) -> Resultado:
+    llm = _cached_llm()
+    with observability_session(name="rewrite", metadata={"tone": req.tom}):
+        comp = await anyio.to_thread.run_sync(
+            lambda: llm.complete(_TPL_REWRITE, tone=req.tom, text=req.texto)
+        )
+    return Resultado(resultado=comp.text, custo_usd=comp.cost)
+```
+
+## Things to watch
+
+- `SemanticCache` needs an **embedder** LLM and a `threshold`. Start around
+  `0.45`; if a "too similar" but wrong answer comes back, raise the threshold.
+- Keep the fallback to `ExactCache`: not every embeddings provider is available
+  in every environment.
+
+## How to run
+
+```bash
+cd pocs/escritor-ia
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000   # http://localhost:8000/docs
+```
+
+See [Cache](/docs/cache) and [Cost](/docs/cost).

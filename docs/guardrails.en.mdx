@@ -1,0 +1,96 @@
+---
+title: "Scope guardrails"
+description: "ScopeGuard keeps the LLM within a domain and blocks unwanted utterances — blocklist + judge LLM classifier. Refusal via Completion, on input and/or output, sync and async. Plain Python, no new dependency."
+---
+
+Guardrails keep the LLM **within a domain** — so it doesn't become an assistant
+that answers anything — and **block** unwanted utterances. It's a thin composition
+layer (plain Python, no new dep): it reuses `Message`/`Completion` and the
+library's own `parse`.
+
+A guardrail intercepts the call at two points:
+
+- **input** — before calling the main model (validates the user's request);
+- **output** — after the answer (validates what the model replied).
+
+When it blocks, the client **short-circuits** and returns a `Completion` with the
+refusal message (`message=`) — on input it doesn't even spend the main model.
+With `raise_on_block=True`, it raises `GuardrailError` instead.
+
+## ScopeGuard
+
+Combines two mechanisms, from cheap to robust:
+
+1. **blocklist** (regex/terms) — blocks instantly, no cost, no LLM;
+2. **scope classifier** (LLM-as-judge) — a cheap `judge=LLM(...)` decides, via
+   structured output, whether the text belongs to the described scope.
+
+```python
+from jangada_ai import LLM, ScopeGuard
+
+guard = ScopeGuard(
+    scope=(
+        "e-Gestor system support: invoices, finance, registrations. "
+        "Does NOT answer other topics (recipes, politics, code, etc.)."
+    ),
+    judge=LLM("groq", "llama-3.1-8b"),   # cheap/fast model just to classify
+    block=[r"\bpassword\b", "ignore the instructions"],  # instant, no LLM
+    message="Sorry, I can only help with e-Gestor topics.",
+    check="both",                         # "input" (default), "output" or "both"
+)
+
+llm = LLM("openai", "gpt-4o", guardrails=[guard])
+
+llm.complete("how do I issue an invoice?")  # in scope -> answers normally
+llm.complete("teach me to bake a cake")      # out of scope -> Completion with refusal
+```
+
+The refusal comes back as a normal `Completion` (`comp.text == message`), with
+`comp.cost is None` and `comp.raw == {"guardrail": "<reason>"}` for inspection.
+
+## Parameters
+
+| Parameter | Purpose |
+|---|---|
+| `scope` | Text description of what's allowed (used by the judge). |
+| `judge` | Cheap `LLM` that classifies scope. If omitted, uses the main model. |
+| `block` | List of regex/terms that block instantly, without calling an LLM. |
+| `message` | Refusal text returned when it blocks. |
+| `check` | `"input"` (default), `"output"` or `"both"`. |
+| `instruction` | Overrides the classifier instruction. |
+| `raise_on_block` | `True` raises `GuardrailError` instead of refusing. |
+| `fail_closed` | If the judge fails/is inconclusive: `True` blocks (safe), `False` (default) allows. |
+
+## Recommendations
+
+- **Use a separate, cheap `judge`** (e.g. `llama-3.1-8b`, `gpt-4.1-nano`,
+  `gemini-2.5-flash-lite`): classification is per call, so a small model keeps
+  cost low. Without `judge`, the main model classifies (recursion is avoided
+  internally, but it's pricier).
+- **The blocklist is free**: put the obvious terms/phrases there and leave topic
+  judgment to the judge.
+- **Cost**: a blocked input does **not** spend the main model. A blocked output
+  already paid for the generation (the refusal just replaces the text).
+
+## Where it applies
+
+- `complete`/`acomplete` and `parse`/`aparse`: input **and** output.
+- `stream`/`astream`: input **only** (an output guard would require buffering the
+  whole stream). If blocked, the stream emits only the refusal message.
+
+## Custom guardrail
+
+`ScopeGuard` covers the common case, but you can write your own by subclassing
+`Guardrail` and overriding `check_input`/`check_output` (and the `a*` versions),
+returning `GuardResult(ok, reason)`:
+
+```python
+from jangada_ai import Guardrail, GuardResult
+
+class MaxLength(Guardrail):
+    message = "Message too long."
+    def __init__(self, limit): self.limit = limit
+    def check_input(self, messages, judge):
+        text = " ".join(m.content for m in messages if isinstance(m.content, str))
+        return GuardResult(len(text) <= self.limit, "exceeded the limit")
+```

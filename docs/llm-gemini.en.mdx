@@ -1,0 +1,77 @@
+---
+title: "Gemini"
+description: "Provider gemini. Adapter over the google-genai SDK. It has a single Client; the async one lives in client.aio."
+---
+
+Provider `gemini`. Adapter over the `google-genai` SDK. It has a single `Client`; the
+async one lives in `client.aio`.
+
+```bash
+pip install "jangada-ai[gemini]"
+```
+
+- **`provider=`**: `"gemini"`
+- **Environment variable**: `GEMINI_API_KEY` (or `GOOGLE_API_KEY`)
+
+```python
+from jangada_ai import LLM
+llm = LLM("gemini", "gemini-2.5-flash")
+```
+
+## What it does
+
+- **Text** and **streaming** (`generate_content` / `generate_content_stream`).
+- **Structured output** (`parse`): `config.response_schema=Model` +
+  `response_mime_type="application/json"` → `resp.parsed`.
+- **Vision** (`images=`): images become `types.Part.from_bytes`.
+- **Documents** (`files=`): local text extraction.
+- **Object detection** (`detect_objects`): **the most accurate** — the 0–1000
+  bounding box format is native to Gemini's training.
+- **Audio transcription** (`transcribe`): multimodal — audio enters as
+  `Part.from_bytes` alongside an instruction; it is **not** a dedicated endpoint.
+
+## Structure and quirks
+
+- **Messages**: the `system` role becomes `system_instruction` in the
+  `GenerateContentConfig` (not a regular message); `assistant` becomes `model`.
+- **Canonical parameters → config**: `max_tokens`→`max_output_tokens`,
+  `stop`→`stop_sequences`; `temperature`/`top_p`/`top_k`/`seed` pass through.
+  It is the only provider with `top_k`.
+- **Model profile** (`profiles.py`): `gemini-3.x` drops sampling
+  (`temperature`/`top_p`/`top_k`). Multi-turn function calling in 3.x requires
+  preserving the *thought signatures* (history integrity). See
+  [Parameters and profiles](/en/docs/parameters).
+- **Response** (`Completion`): `usage` comes from `usage_metadata`
+  (`prompt_token_count`/`candidates_token_count`).
+
+## Thinking — you pass only `thinking_budget`
+
+Gemini has two incompatible conventions: **2.5** only accepts `thinking_budget`
+(in tokens) and **3.x** only accepts `thinking_level` (`LOW`/`HIGH`) — mixing them
+returns HTTP 400. jangada handles this for you: pass **`thinking_budget`** (or
+`thinking_level`) and the library adapts to the model, wrapping it in the native
+`thinking_config` under the hood.
+
+```python
+# Works the same on both versions — you change nothing:
+LLM("gemini", "gemini-2.5-flash").complete("...", params={"thinking_budget": 1024})
+LLM("gemini", "gemini-3-pro").complete("...",  params={"thinking_budget": 1024})
+# on 2.5 it becomes thinking_config(thinking_budget=1024);
+# on 3.x the profile converts it to thinking_config(thinking_level="HIGH").
+```
+
+- `thinking_budget`: `0` disables (when the model allows), `-1` is automatic.
+- On 3.x the budget is approximated to a valid level (`LOW` if ≤0, else `HIGH`).
+  On 2.5 a `thinking_level` is converted to a budget. You can also pass a ready
+  `thinking_config`, which is respected as-is.
+- **Accepted levels**: `thinking_level` recognizes `MINIMAL`/`LOW`/`MEDIUM`/`HIGH`.
+  As **input on 2.5** all four are converted to a `thinking_budget`
+  (`0`/`1024`/`8192`/`24576`). **Directly on 3.x**, Gemini only accepts `LOW`/`HIGH`
+  universally (`MINIMAL` is Flash/Lite only, `MEDIUM` only on 3.0 Flash; using them
+  as a level on other 3.x returns HTTP 400) — that's why the budget→level
+  conversion uses only `LOW`/`HIGH`.
+
+## Why it's the "Swiss Army knife" here
+
+It is the only one that covers vision, detection, and audio **without separate
+endpoints** — all via `generateContent`. See [Capability matrix](/en/docs/capabilities).

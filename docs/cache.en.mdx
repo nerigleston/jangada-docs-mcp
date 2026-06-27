@@ -1,0 +1,64 @@
+---
+title: "Response cache"
+description: "Cache LLM responses to save tokens and latency — exact (ExactCache) and semantic (SemanticCache, by embedding similarity). Plugged via LLM(..., cache=...)."
+---
+
+jangada can **cache LLM responses** to save tokens and latency — plugged via
+`LLM(..., cache=...)`. The client checks the cache **before** calling the provider
+and populates it **after** a successful response. Two modes: **exact** and
+**semantic**.
+
+## Exact cache
+
+Hits only when the request is **identical** (same method, `provider`/`model`/`params`
+scope and messages). LRU with optional `max_size` and `ttl`, no embedding cost.
+
+```python
+from jangada_ai import LLM, ExactCache
+
+llm = LLM("openai", "gpt-4o-mini", cache=ExactCache(max_size=512, ttl=3600))
+llm.complete("Summarize the theory of relativity.")   # calls the provider
+llm.complete("Summarize the theory of relativity.")   # served from cache (identical)
+```
+
+## Semantic cache
+
+Hits when the question is **similar enough** to a previous one in the same scope
+(cosine similarity ≥ `threshold`). Reuses `LLM.embed` + a RAG `vector_store`.
+After a semantic hit it applies an **exact scope filter**
+(provider/model/params/method) for high precision.
+
+```python
+from jangada_ai import LLM, SemanticCache
+
+embedder = LLM("openai", "text-embedding-3-small")
+cache = SemanticCache(embedder, threshold=0.85)
+
+llm = LLM("openai", "gpt-4o-mini", cache=cache)
+llm.complete("What is the capital of France?")
+llm.complete("Tell me the French capital.")   # paraphrase → cache hit
+```
+
+### Tune `threshold` per embedding model
+
+The cosine scale **varies a lot between models** — there is no magic number:
+
+| Embedding model | Paraphrase (≈) | Distinct question (≈) |
+|---|---|---|
+| `text-embedding-3-small` (OpenAI) | 0.62 | 0.11 |
+| `gemini-embedding-001` (Gemini) | 0.90 | 0.49 |
+
+The default is `0.85` (a middle ground). **Measure paraphrases vs. distinct
+questions on your model** and pick a cutoff between the two distributions. Too
+high = dead cache; too low = wrong answers (false positives).
+
+## What is **not** cached
+
+- Calls with **tools** or **MCP** (`tools=`/`mcp_servers=`).
+- **Streaming** (`stream`/`astream`).
+- Responses coming from **fallback** (only the primary candidate populates).
+- **Guardrail** refusals.
+
+`complete`/`parse` and their async variants share the same key. The cache is
+**process-local** (the `Completion` is kept in memory; the vector store is used
+only for similarity).

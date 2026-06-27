@@ -1,0 +1,77 @@
+---
+title: "Tutorial: extração estruturada (texto e imagem → Pydantic)"
+description: "Objetivo: transformar texto solto ou uma foto num objeto Pydantic validado, com uma só chamada parse(). Mesmo código em qualquer provider — a jangada cuida do mecanismo (OpenAI..."
+---
+
+Objetivo: transformar texto solto ou uma **foto** num objeto Pydantic validado,
+com uma só chamada `parse()`. Mesmo código em qualquer provider — a jangada cuida
+do mecanismo (OpenAI `.parse`, Groq json_schema, Gemini `response_schema`,
+Anthropic tool-forcing).
+
+## 1. Defina o que você quer extrair
+
+O schema é um modelo Pydantic. Use `Field(description=...)` para guiar o modelo:
+
+```python
+from pydantic import BaseModel, Field
+
+class Item(BaseModel):
+    descricao: str
+    quantidade: float
+    valor_total: float
+
+class NotaFiscal(BaseModel):
+    estabelecimento: str
+    cnpj: str | None = Field(default=None, description="CNPJ como aparece")
+    itens: list[Item]
+    valor_a_pagar: float
+```
+
+## 2. Extrair de texto
+
+```python
+from jangada_ai import LLM
+
+llm = LLM("openai", "gpt-4o-mini")
+nota = llm.parse("Padaria do Zé — 2 pães R$8, 1 leite R$6. Total R$14.", NotaFiscal).parsed
+print(nota.estabelecimento, nota.valor_a_pagar)   # Padaria do Zé 14.0
+```
+
+`parse()` devolve um `Completion`; o objeto validado fica em `.parsed`.
+
+## 3. Extrair de uma imagem (vision + structured)
+
+A mesma chamada aceita `images=` — vision e structured output juntos:
+
+```python
+nota = llm.parse(
+    "Extraia os dados desta nota fiscal. Transcreva exatamente; não invente.",
+    NotaFiscal,
+    images=["nota.jpg"],     # caminho, bytes ou base64
+).parsed
+
+for i in nota.itens:
+    print(f"{i.descricao}: {i.quantidade:g} = {i.valor_total:.2f}")
+```
+
+Use um modelo com visão (gpt-4o-mini, gemini-2.5-flash, claude-haiku-4-5, ou um
+multimodal do Groq como `meta-llama/llama-4-scout-17b-16e-instruct`).
+
+## 4. Funciona em qualquer provider
+
+```python
+for provider, modelo in [("openai", "gpt-4o-mini"),
+                         ("gemini", "gemini-2.5-flash"),
+                         ("anthropic", "claude-haiku-4-5-20251001")]:
+    p = LLM(provider, modelo).parse("João tem 30 anos.", NotaFiscal)  # exemplo simplificado
+```
+
+> **Groq:** modelos sem `json_schema` (ex.: `llama-3.3-70b`) caem automaticamente
+> para JSON Object mode — `parse()` funciona mesmo assim.
+
+## Próximos passos
+
+- Receita completa: `examples/cookbook/01_extracao_nota_fiscal.py`.
+- Referência: [Structured output](/docs/structured-output) e [Vision](/docs/vision).
+- Para documentos (docx/pdf/xlsx) sem vision, veja [Documentos](/docs/documents).
+

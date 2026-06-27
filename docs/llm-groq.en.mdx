@@ -1,0 +1,49 @@
+---
+title: "Groq"
+description: "Provider groq. Adapter over the groq SDK, which speaks the same chat.completions dialect as OpenAI — that's why it inherits from OpenAICompatible."
+---
+
+Provider `groq`. Adapter over the `groq` SDK, which speaks the same
+`chat.completions` dialect as OpenAI — that's why it inherits from `_OpenAICompatible`.
+
+```bash
+pip install "jangada-ai[groq]"
+```
+
+- **`provider=`**: `"groq"`
+- **Environment variable**: `GROQ_API_KEY`
+- **Difference from OpenAI**: `supports_parse_helper = False` (no native
+  `.parse()`).
+
+```python
+from jangada_ai import LLM
+llm = LLM("groq", "llama-3.3-70b-versatile")
+```
+
+## What it does
+
+- **Text** and **streaming** — focused on very low latency.
+- **Structured output** (`parse`): since there is no `.parse` helper, it uses
+  `response_format={"type":"json_schema",...}` and validates with
+  `model_validate_json`.
+- **Vision** (`images=`): supported **only on vision-capable models** (e.g.,
+  the Llama vision family). Text-only models reject images.
+- **Documents** (`files=`): local text extraction.
+- **Audio transcription** (`transcribe`): dedicated endpoint (compatible with
+  OpenAI's). Models: `whisper-large-v3`, `whisper-large-v3-turbo` (fast).
+
+## Structure and quirks
+
+- **Parameters**: `temperature`, `max_tokens`, `top_p`, `stop`, `seed`.
+  No `top_k`.
+- **Same base as OpenAI**: message translation, structured, and audio
+  reuse `_OpenAICompatible`; only `sdk_module`/`sync_class`/
+  `async_class`/`supports_parse_helper` change.
+- **Response** (`Completion`): same as OpenAI (`text`, `usage`, `raw`).
+
+## When to choose Groq
+
+Low inference cost and speed — great for batch transcription
+(`whisper-large-v3-turbo`) and low-latency responses. Combine it as a
+**fallback** or **primary** with OpenAI (same dialect). See
+[Audio transcription](/en/docs/audio) and [Retry and fallback](/en/docs/retry-fallback).

@@ -1,0 +1,216 @@
+---
+title: "RAG (embeddings + busca vetorial/híbrida)"
+description: "A jangada cobre as partes \"de LLM\" do RAG (embeddings + montar o contexto) e traz um módulo jangadaai.rag opcional com chunking, vector store (pgvector/Mongo) e busca híbrida."
+---
+
+A jangada cobre as partes "de LLM" do RAG (embeddings + montar o contexto) e traz
+um módulo `jangada_ai.rag` opcional com chunking, vector store (pgvector/Mongo)
+e busca híbrida.
+
+```bash
+pip install "jangada-ai[rag]"   # psycopg (pgvector) + pymongo (Mongo)
+```
+
+## Embeddings (`embed`)
+
+Capacidade opcional, igual ao áudio: **OpenAI e Gemini** suportam; **Anthropic e
+Groq** levantam `UnsupportedError`.
+
+```python
+from jangada_ai import LLM
+
+emb = LLM("openai", "text-embedding-3-small")   # ou ("gemini", "gemini-embedding-001")
+emb.embed("uma frase")            # -> vetor (list[float])
+emb.embed(["a", "b"])             # -> lista de vetores
+emb.embed(textos, task="document")  # task: "document" ao indexar, "query" ao buscar
+```
+
+`task` vira `task_type` no Gemini (`RETRIEVAL_DOCUMENT`/`RETRIEVAL_QUERY`); a
+OpenAI ignora. `dimensions` (OpenAI) / `output_dimensionality` (Gemini) vão via `**opts`.
+
+| Provider | Embeddings? | Modelo típico |
+|----------|:-----------:|---------------|
+| OpenAI   | ✅ | `text-embedding-3-small` / `-large` |
+| Gemini   | ✅ | `gemini-embedding-001` |
+| Anthropic| ❌ | — (use Voyage/Cohere por fora) |
+| Groq     | ❌ | — |
+
+## Pipeline completo (`RAG`)
+
+```python
+from jangada_ai import LLM
+from jangada_ai.rag import RAG, vector_store
+
+emb  = LLM("openai", "text-embedding-3-small")
+chat = LLM("openai", "gpt-4o-mini")
+
+# o store é escolhido pela STRING DE CONEXÃO (só passe a sua DATABASE_URL_VECTOR)
+store = vector_store("postgresql://user:senha@host:5432/db")   # ou "mongodb+srv://..."
+rag = RAG(emb, store, chat=chat, k=5)   # k = nº de trechos no contexto (ajustável)
+
+rag.add_document("manual.pdf", metadata={"fonte": "manual"})   # extrai -> chunk -> embed -> grava
+resposta = rag.ask("Como faço backup?", mode="hybrid")          # usa o k do RAG
+mais = rag.ask("Como faço backup?", k=10, mode="hybrid")        # override por chamada
+print(resposta.text)
+for s in resposta.sources:
+    print(s.score, s.chunk.content[:80])
+```
+
+## Vector store por string de conexão
+
+`vector_store(url)` detecta o adapter pelo esquema:
+
+| URL | Adapter | Busca |
+|-----|---------|-------|
+| `postgresql://` / `postgres://` | pgvector (Postgres) | cosseno (`<=>`) + full-text (`tsvector`) |
+| `mongodb://` / `mongodb+srv://` | MongoDB | Atlas `$vectorSearch` + `$text` (fallback cosseno client-side) |
+| `memory` / `None` | em memória | cosseno + keyword (sem deps) |
+
+As tabelas/coleções e índices são criados sozinhos no primeiro uso (`setup`).
+
+### Busca textual em português (pgvector)
+
+O `PgVectorStore` usa a configuração `'simple'` do Postgres por padrão (sem
+stemming nem stopwords). Para conteúdo em **português**, passe
+`text_config="portuguese"` — melhora a parte lexical da busca híbrida:
+
+```python
+from jangada_ai.rag import vector_store
+
+store = vector_store("postgresql://...", text_config="portuguese")
+```
+
+A config é fixada na **criação** da tabela (coluna `tsv` GENERATED); defina-a
+antes do primeiro `setup`. Vale qualquer `regconfig` (`english`, `spanish`, ...).
+
+## Modos de busca
+
+`mode="vector" | "text" | "hybrid"`:
+
+- **vector** — só similaridade do embedding.
+- **text** — lexical: **BM25** no store em memória (com `rank_bm25`; cai para
+  contagem de termos sem ele) e full-text nativo no pgvector (`tsvector`) / Mongo (`$text`).
+- **hybrid** — combina os dois por **Reciprocal Rank Fusion (RRF)**.
+
+O balanço vetorial × lexical sai de `weights=(vetorial, texto)` ou do atalho
+**`alpha`** (0 = só BM25/texto, 1 = só vetorial; `alpha` vira `weights=(alpha, 1-alpha)`):
+
+```python
+RAG(emb, store, chat=chat, alpha=0.5)   # equilíbrio; 0.0 = só BM25, 1.0 = só vetorial
+```
+
+```python
+rag.search("backup incremental", k=5, mode="vector")   # só vetorial
+rag.search("backup incremental", k=5, mode="hybrid")   # vetorial + texto (RRF)
+```
+
+## Reranking (maior salto de qualidade)
+
+O retriever traz candidatos (bom *recall*), mas a ordem nem sempre é a melhor.
+Um **reranker** reordena os candidatos por relevância e fica com os melhores —
+o maior ganho de qualidade de RAG por esforço. Com `reranker=`, o `RAG` busca
+mais candidatos (`fetch_k`, padrão `k*4`) e devolve os `k` melhores reordenados.
+
+```python
+from jangada_ai.rag import RAG, Reranker, vector_store
+
+rag = RAG(emb, vector_store("memory"), chat=chat, reranker=Reranker.cohere())
+rag.ask("Como faço backup incremental?")
+```
+
+Construtores: `Reranker.cohere(model="rerank-v3.5")`, `Reranker.voyage(model="rerank-2")`
+(extra `jangada-ai[rerank]` + `COHERE_API_KEY`/`VOYAGE_API_KEY`) ou
+`Reranker.fn(lambda query, docs: [scores])` para um scorer próprio. Por chamada,
+`rag.search(q, rerank=False)` desliga.
+
+## Parâmetros ajustáveis
+
+Definidos no `RAG(...)` (padrão) e/ou por chamada:
+
+```python
+rag = RAG(
+    emb, store, chat=chat,
+    k=5,                      # nº de trechos no contexto
+    min_score=0.25,           # descarta trechos abaixo dessa similaridade
+    max_context_chars=6000,   # orçamento do contexto (trunca o excedente)
+    chunker=meu_chunker,      # função(text)->list[str] (troca o chunking padrão)
+    rrf_k=60,                 # constante do RRF (híbrido)
+    weights=(1.0, 0.5),       # pesos (vetorial, texto) no híbrido
+    chunk_size=1000, overlap=200,
+)
+
+# filtro por metadata (escopar por documento/fonte/tenant) + override por chamada
+rag.ask("backup?", k=8, filter={"fonte": "manual"}, min_score=0.3, mode="hybrid")
+rag.search("backup?", filter={"tenant": "acme"}, mode="vector")
+```
+
+- **`filter`** vira `metadata @> ...` no pgvector e `$match` em `metadata.<chave>` no Mongo.
+- **`min_score`** usa a similaridade real (cosseno no vetorial, rank no texto).
+- **`max_context_chars`** corta os trechos que não couberem (mantém ao menos um).
+- **`weights=(v, t)`** pondera os rankings vetorial e de texto na fusão RRF.
+
+## Estratégias avançadas de retrieval (opt-in)
+
+Passe `strategy=` no `search`/`ask` (padrão: busca simples, continua igual):
+
+- **multi-query** — o LLM gera variações da pergunta, busca todas e funde por RRF.
+  `rag.ask(q, strategy="multi_query")`.
+- **parent-document** — indexe filhos pequenos guardando o trecho-pai; a busca
+  devolve o pai: `rag.add_document("m.pdf", parent_chunk_size=4000)` +
+  `rag.ask(q, strategy="parent_document")`.
+- **contextual compression** — o LLM extrai de cada trecho só o relevante:
+  `rag.ask(q, compress=True)`.
+
+Combinam entre si e com `reranker=`.
+
+## Indexação incremental
+
+`sync_document`/`sync_texts` reindexam **só o que mudou** (dedup por hash):
+embedam os chunks novos e removem os que sumiram. Requer `document_id`.
+
+```python
+rag.sync_document("manual.pdf", name="manual")
+# {'added': 3, 'removed': 1, 'unchanged': 42}
+```
+
+## Qual recurso usar? (resumo)
+
+Todos são **opt-in** — a lib funciona sem nenhum. Combine conforme a necessidade:
+
+| Quero… | Use |
+|--------|-----|
+| Melhorar muito a ordem dos trechos | `reranker=Reranker.cohere()` |
+| Pegar sinônimos/perguntas vagas | `strategy="multi_query"` |
+| Contexto melhor sem perder precisão | `parent_chunk_size=` + `strategy="parent_document"` |
+| Reduzir tokens de contexto | `compress=True` |
+| Chunks que não cortam ideias | `chunker=semantic_chunker(emb)` |
+| Reindexar barato (só o que mudou) | `sync_document(...)` |
+
+Receita recomendada: **semantic chunking** (índice) + **reranker** (busca); some
+**multi-query** se as perguntas forem vagas.
+
+```python
+from jangada_ai import LLM
+from jangada_ai.rag import RAG, Reranker, semantic_chunker, vector_store
+
+emb = LLM("openai", "text-embedding-3-small")
+rag = RAG(emb, vector_store("postgresql://..."), chat=LLM("openai", "gpt-4o-mini"),
+          chunker=semantic_chunker(emb), reranker=Reranker.cohere())
+rag.sync_document("manual.pdf", name="manual")
+ans = rag.ask("Como faço backup?", strategy="multi_query", compress=True)
+```
+
+## Chunking
+
+```python
+from jangada_ai.rag import chunk_text
+chunk_text(texto, size=1000, overlap=200)   # quebra sem cortar palavras
+```
+
+Relacionado: [Documentos](/docs/documents) (extração de texto reaproveitada no RAG)
+e [Observabilidade](/docs/observability).
+
+## Exemplo
+
+`examples/rag_example.py` — script executável.
+

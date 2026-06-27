@@ -1,0 +1,80 @@
+---
+title: "Example: Agent research"
+description: "Autonomous agents that investigate tasks with tools, teams with handoff (Squad), planning, provider failover and remote MCP."
+---
+
+A research platform with autonomous agents. It shows jangada's four
+orchestration shapes side by side: **single agent**, **team (`Squad`)**,
+**planning (`plan`)** and **failover (`with_fallback`)** — plus integration with
+remote **MCP** servers.
+
+**Folder:** `pocs/pesquisa-agentes` · **Suggested port:** `8004`
+
+## jangada features
+
+- `Agent` — autonomous agent with a tool loop
+- `Squad` — team of agents with sequential handoff
+- `plan()` — decomposes a goal into tasks
+- `with_fallback()` — automatic failover between providers
+- `MCPClient` + `run_agent()` — an agent over a remote MCP server's tools
+
+## Core of the example
+
+Single agent (`app/routers/pesquisa.py`):
+
+```python
+from jangada_ai import Agent
+from jangada_ai.prebuilt import calculator, current_datetime, wikipedia_search
+
+agent = Agent(
+    llm, role="Researcher", goal="answer accurately using the tools",
+    tools=[wikipedia_search, calculator, current_datetime],
+)
+res = agent.run(req.tarefa)
+```
+
+Team with handoff:
+
+```python
+from jangada_ai import Squad
+
+researcher = Agent(llm, role="Researcher", goal="gather facts and sources", tools=[wikipedia_search])
+analyst    = Agent(llm, role="Analyst", goal="organize the findings into topics")
+writer     = Agent(llm, role="Writer", goal="write a clear, concise briefing")
+res = Squad([researcher, analyst, writer]).run(req.tarefa)
+```
+
+Provider failover:
+
+```python
+llm = primary.with_fallback(backup)     # falls to backup on 429/5xx/timeout
+comp = await llm.acomplete(req.prompt)
+print(comp.provider, comp.model)        # who actually answered
+```
+
+Agent over remote MCP (`app/routers/mcp.py`):
+
+```python
+from jangada_ai import MCPClient, run_agent
+
+async with MCPClient(url, headers={"Authorization": f"Bearer {token}"}) as mcp:
+    ans = await run_agent(llm, req.tarefa, client=mcp)
+```
+
+## Things to watch
+
+- Prefer a sequential `Squad` when roles are clear
+  (research → analyze → write); it's more predictable than one long single agent.
+- `with_fallback` fails over **before the first token** — it won't switch
+  providers mid-response.
+
+## How to run
+
+```bash
+cd pocs/pesquisa-agentes
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8004   # http://localhost:8004/docs
+```
+
+See [Agents](/docs/agents), [Retry and fallback](/docs/retry-fallback) and
+[MCP](/docs/mcp).

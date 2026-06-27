@@ -1,0 +1,186 @@
+---
+title: "Agents and teams"
+description: "Jangada ships a lightweight multi-agent orchestration layer — Agent and Squad — built on top of what already exists (tool calling, MCP, RAG). No new dependency: it is plain Python composing the library itself."
+---
+
+Jangada ships a lightweight **multi-agent orchestration** layer — `Agent` and
+`Squad` — built on top of what already exists (tool calling, MCP, RAG). No new
+dependency: it is plain Python composing the library itself.
+
+## Agent — an agent with a role and tools
+
+An `Agent` is an LLM with a **role/goal**, optionally with **tools** (functions
+it runs) and **memory**. It runs the tool-calling loop on its own until the
+final answer.
+
+```python
+from jangada_ai import LLM, Agent
+
+def weather(city: str) -> str:
+    "Returns the weather for a city."
+    return f"sunny in {city}, 28°C"
+
+meteo = Agent(
+    LLM("openai", "gpt-4o-mini"),
+    role="Meteorologist",
+    goal="report the weather clearly",
+    tools=[weather],
+)
+
+res = meteo.run("What's the weather like in Recife?")
+print(res.text)          # the model called weather("Recife") and replied
+print(res.cost, res.usage, res.iterations)
+```
+
+- `tools=` are **callables** — the function runs locally when the model calls
+  it, and the result goes back to the model. They can be **sync** (`def`) or
+  **async** (`async def`): `async def` tools are awaited inside `arun`. With
+  `run` (sync) use sync tools only.
+- For an **MCP** server, pass `mcp_client=MCPClient(...)` and use **`arun`**
+  (async): the agent lists the server's tools and uses them alongside its own.
+
+```python
+async with MCPClient("https://your-mcp/mcp/") as mcp:
+    agent = Agent(llm, role="Operator", mcp_client=mcp)
+    print((await agent.arun("List the products")).text)
+```
+
+## Multi-turn conversation (`history=`)
+
+`run`/`arun` accept a `history` of previous turns (`list[Message]`), inserted
+**before** the new task, giving faithful dialogue continuity. `AgentResult.messages`
+returns the turn's history — you **persist** it (e.g. per `conversation_id`) and
+reinject on the next turn:
+
+```python
+from jangada_ai.message import Message
+
+history = [
+    Message("user", "How much did I spend in May?"),
+    Message("assistant", "R$ 3,200 in May."),
+]
+res = await agent.arun("And the month before?", history=history)
+```
+
+## Streaming the response (`astream`)
+
+`astream` emits the **final response** token-by-token. Tool-calls are resolved
+internally first (the stream protocol does not expose `tool_calls`); with no
+tools, it streams directly.
+
+```python
+async for token in agent.astream("Summarize my spending this month"):
+    print(token, end="", flush=True)
+```
+
+## Agent Card and A2A server
+
+`card()` returns discoverable metadata in the **Agent Card** vocabulary of the
+[A2A](https://a2a-protocol.org) protocol (`name`, `description`, `version`,
+`url`, `capabilities`, `skills`). The `jangada[a2a]` extra goes further and
+exposes the agent as an **A2A server** (JSON-RPC): discovery, `message/send`,
+`message/stream` (SSE), `tasks/get`/`tasks/cancel`, with continuity by
+`contextId`.
+
+```python
+from jangada_ai.a2a import A2AHandler, build_a2a_app
+
+app = build_a2a_app(A2AHandler(sofia, url="https://app.example/a2a"))
+# ASGI Starlette — serve with:  uvicorn module:app
+```
+
+| Route | What |
+|------|-------|
+| `GET /.well-known/agent.json` | Agent Card of the primary agent |
+| `GET /agents` | catalog (list of Agent Cards) |
+| `POST /` | `message/send` (JSON), `message/stream` (SSE), `tasks/get`, `tasks/cancel` |
+| `POST /agents/{name}` | same, for a catalog agent |
+
+### Multi-tenant: agent resolved per request
+
+Instead of a fixed agent, pass a **`resolver`** that receives the **request
+context** (headers/auth) and returns the right `Agent` — handy when the agent is
+built per tenant (e.g. tools closing over the `tenant_id` from the JWT). With
+`tenant_key`, history is **isolated per tenant**.
+
+```python
+def resolver(ctx):                       # ctx = {"headers": {...}, "auth": "Bearer ..."}
+    tenant = (ctx.get("auth") or "").removeprefix("Bearer ")
+    return build_sofia(tenant_id=tenant)
+
+handler = A2AHandler(resolver=resolver, name="Sofia",
+                     tenant_key=lambda c: c.get("auth", ""))
+app = build_a2a_app(handler)
+```
+
+Everything is optional (the fixed mode `A2AHandler(agent)` stays the same):
+`resolver` (excludes `agent`), `name` (required with `resolver`), `description`,
+`tenant_key` (isolates history) and `context_factory=` on `build_a2a_app` (how to
+build the context from the `Request` — swap it to validate/decode the JWT). The
+lib does **not** decode JWTs.
+
+## Long-term memory (RAG)
+
+`RAGMemory` gives the agent persistent memory over a `RAG`: before answering it
+**recalls** what is relevant; afterwards, it **remembers** what happened.
+
+```python
+from jangada_ai import LLM, Agent, RAGMemory
+from jangada_ai.rag import RAG, InMemoryVectorStore
+
+rag = RAG(LLM("openai", "text-embedding-3-small"), InMemoryVectorStore())
+agent = Agent(llm, role="Support", memory=RAGMemory(rag, k=3))
+```
+
+## Squad — several agents collaborating
+
+`Squad` orchestrates a team of agents. Two processes:
+
+### Sequential (handoff)
+
+Each agent runs in order and receives the previous one's output as context:
+
+```python
+from jangada_ai import LLM, Agent, Squad
+
+llm = LLM("openai", "gpt-4o-mini")
+researcher = Agent(llm, role="Researcher", goal="gather facts")
+writer     = Agent(llm, role="Writer", goal="write clear copy")
+
+squad = Squad([researcher, writer])
+res = squad.run("Write a paragraph about northeastern Brazilian rafts.")
+print(res.text)            # the last agent's output
+print(res.outputs)         # {"Researcher": "...", "Writer": "..."}
+```
+
+### Hierarchical (delegation)
+
+A **manager** agent receives `delegate_to_<role>` tools generated automatically
+from the members and decides whom to delegate each subtask to:
+
+```python
+manager = Agent(llm, role="Manager", goal="coordinate the team")
+squad = Squad([researcher, writer], manager=manager)
+res = squad.run("Produce a summary about topic X.")
+```
+
+Both `run` and `arun` aggregate the whole team's `usage`/`cost`.
+
+## Planning
+
+`plan()` breaks a goal down into an ordered list of tasks (structured output):
+
+```python
+from jangada_ai import plan
+
+for task in plan(llm, "Launch an AI newsletter", max_tasks=5):
+    print("-", task)
+```
+
+## How it relates to the rest
+
+There is no magic and no new infra: `Agent` is the tool-calling loop (like
+[`run_agent`](/docs/mcp)); memory is the [RAG](/docs/rag); the hierarchical
+`Squad` uses tool-based delegation ([Tools](/docs/tools)). You can swap any
+agent's provider without changing anything else — jangada's thesis holds here
+too.

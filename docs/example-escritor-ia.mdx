@@ -1,0 +1,73 @@
+---
+title: "Exemplo: Escritor IA"
+description: "Reescreve, traduz e resume textos usando templates e cache (exato + semântico) para economizar tokens em chamadas repetidas."
+---
+
+Um auxiliar de escrita que reescreve textos em tons diferentes, traduz e resume.
+O destaque é o **cache de respostas** (exato e semântico): chamadas repetidas (ou
+parafraseadas) não pagam o LLM de novo.
+
+**Pasta:** `pocs/escritor-ia` · **Porta sugerida:** `8000`
+
+## Recursos da jangada
+
+- `LLM.complete()` com templates `{{ }}`
+- `ExactCache` — cache para prompts idênticos
+- `SemanticCache` — cache por similaridade (embeddings), pega paráfrases
+- `Completion.cost` — custo na resposta
+
+## Núcleo do exemplo
+
+Montagem do LLM com cache, com fallback de `SemanticCache` → `ExactCache`
+(`app/routers/escritor.py`):
+
+```python
+from jangada_ai import LLM, ExactCache, SemanticCache, UnsupportedError
+
+def _cached_llm() -> LLM:
+    embed_key = s.api_key_for(s.embed_provider)
+    if embed_key:
+        embedder = LLM(s.embed_provider, s.embed_model, api_key=embed_key)
+        try:
+            cache = SemanticCache(embedder, threshold=0.45)
+        except UnsupportedError:
+            cache = ExactCache(max_size=512, ttl=3600)
+    else:
+        cache = ExactCache(max_size=512, ttl=3600)
+    return LLM(..., cache=cache, name="escritor-cache")
+```
+
+Uso com template:
+
+```python
+_TPL_REESCREVER = (
+    "Reescreva o texto abaixo em tom {{tom}}, preservando o sentido. "
+    "Responda APENAS com o texto reescrito, em português.\n\nTexto:\n{{texto}}"
+)
+
+@router.post("/reescrever", response_model=Resultado)
+async def reescrever(req: ReescreverRequest) -> Resultado:
+    llm = _cached_llm()
+    with observability_session(name="reescrever", metadata={"tom": req.tom}):
+        comp = await anyio.to_thread.run_sync(
+            lambda: llm.complete(_TPL_REESCREVER, tom=req.tom, texto=req.texto)
+        )
+    return Resultado(resultado=comp.text, custo_usd=comp.cost)
+```
+
+## Pontos de atenção
+
+- O `SemanticCache` precisa de um LLM **embedder** e de um `threshold`. Comece em
+  `~0.45`; se vier resposta "parecida demais" mas errada, suba o limiar.
+- Mantenha o fallback para `ExactCache`: nem todo provider de embeddings está
+  disponível em todo ambiente.
+
+## Como rodar
+
+```bash
+cd pocs/escritor-ia
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000   # http://localhost:8000/docs
+```
+
+Veja [Cache](/docs/cache) e [Custo](/docs/cost).

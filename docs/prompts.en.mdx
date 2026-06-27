@@ -1,0 +1,94 @@
+---
+title: "Prompt registry"
+description: "Version prompts (history, production tag, rollback without deploy) and reference them by name with PromptVersion.pull/push. Opt-in: coexists with prompts in code; resolves to a plain string compatible with templates, structured output and tools."
+---
+
+Version your prompts in one place — with **history, rollback without deploy and
+traceability** — and reference them **by name**. It's **opt-in**: it coexists
+with prompts in code (if you don't use it, nothing changes).
+
+```python
+from jangada_ai import LLM, PromptVersion
+```
+
+It uses the same config as observability (the project key):
+
+```bash
+JANGADA_OBSERVABILITY_API_KEY=lobs_xxx
+# optional: JANGADA_OBSERVABILITY_ENDPOINT=https://api.jangada.dev.br
+```
+
+## Both ways coexist
+
+**Prompt in code (default, unchanged):**
+
+```python
+LLM("openai", "gpt-4o-mini").complete("You are a tax assistant. ...")
+```
+
+**Prompt from the registry (opt-in):**
+
+```python
+p = PromptVersion.pull("tax-assistant")          # production version
+LLM("openai", "gpt-4o-mini").complete(p.render(client="ACME"))
+```
+
+In the end the registry resolves to a **plain string** that goes into the normal
+`complete()`/`parse()` — compatible with `{{ }}` templates, structured output,
+tools, etc.
+
+## Publish a version (`push`)
+
+Each `push` creates a **new immutable version**. With `tag="production"`, it marks
+that version as production (moving the tag away from previous ones).
+
+```python
+PromptVersion.push(
+    "tax-assistant",
+    "You are a tax assistant. Answer about {{ topic }} concisely.",
+    tag="production",
+)
+```
+
+You can also create/version **from the dashboard** (*Prompts* tab) — both write to
+the same registry.
+
+## Resolve a version (`pull`)
+
+`pull` decides which version to use, in this order:
+
+1. the `tag` you ask for (`PromptVersion.pull("name", tag="staging")`);
+2. otherwise the one marked **`production`**;
+3. otherwise the **latest** version.
+
+```python
+p = PromptVersion.pull("tax-assistant")   # production (or latest)
+text = p.render(topic="VAT")               # applies the {{ }} template
+```
+
+## Rollback
+
+In the dashboard (*Prompts* tab → the prompt → **Make production** on an earlier
+version), the `production` tag moves back to that version — **no deploy**. The next
+`pull` picks up the restored version.
+
+## Trace it ("which prompt generated this?")
+
+Wrap calls in `with p.use():` — each trace records which **prompt and version**
+generated it (shown in the dashboard, in the call detail, linking to the prompt).
+Opt-in; requires observability enabled.
+
+```python
+p = PromptVersion.pull("tax-assistant")
+with p.use():
+    resp = llm.complete(p.render(topic="VAT"))   # trace: tax-assistant v2
+```
+
+## Why use it
+
+- **History + rollback** without touching code or deploying.
+- **Traceability**: the team sees which version is in production.
+- **Comparison via evals**: run the same dataset with prompt v2 vs v3 and see which
+  scores higher.
+- **Autonomy**: product tweaks the prompt in the dashboard; the dev isn't a
+  bottleneck.

@@ -1,0 +1,64 @@
+---
+title: "OpenRouter"
+description: "Provider openrouter. A gateway to hundreds of models (OpenAI, Anthropic, Google, Meta...) speaking the OpenAI chat.completions dialect — reuses the openai SDK pointed at OpenRouter's base_url."
+---
+
+Provider `openrouter`. [OpenRouter](https://openrouter.ai) is a *gateway* to
+**hundreds of models** (OpenAI, Anthropic, Google, Meta, ...) that speaks the same
+`chat.completions` dialect as OpenAI. So the adapter reuses the `openai` SDK
+pointed at OpenRouter's `base_url` — only the URL and the key change.
+
+```bash
+pip install "jangada-ai[openai]"   # uses OpenAI's own SDK
+```
+
+- **`provider=`**: `"openrouter"`
+- **Environment variable**: `OPENROUTER_API_KEY`
+- **Models qualified by vendor**: `openai/gpt-4o`,
+  `anthropic/claude-sonnet-4.6`, `google/gemini-2.5-flash`, `meta-llama/...`
+
+```python
+from jangada_ai import LLM
+
+LLM("openrouter", "openai/gpt-4o")                     # uses OPENROUTER_API_KEY
+LLM("openrouter", "anthropic/claude-sonnet-4.6")
+LLM("openrouter", "google/gemini-2.5-flash", api_key="sk-or-...")
+```
+
+## What it does
+
+- **Text** and **streaming** — one endpoint, any model in the catalog.
+- **Structured output** (`parse`): since models are heterogeneous (each with its
+  own quirks), it uses `json_schema` with **automatic fallback to JSON Object
+  mode** (same path as Groq) — `parse()` works on any model. Hence
+  `supports_parse_helper = False`.
+- **Vision** (`images=`): on the catalog's multimodal models.
+- **Documents** (`files=`): local text extraction.
+- **Transcription** (`transcribe`) and **embeddings** (`embed`): supported —
+  OpenRouter exposes those endpoints and lists models for both (`whisper-*`,
+  `gpt-4o-transcribe`, `text-embedding-3-*`, `gemini-embedding-001`, ...).
+
+## Structure and quirks
+
+- **Same OpenAI base**: inherits from `_OpenAICompatible`; only the `base_url`
+  (`https://openrouter.ai/api/v1`), the key and `supports_parse_helper` change.
+- **Ranking headers** (`HTTP-Referer`/`X-Title`): pass via `default_headers=`
+  (client kwargs).
+- **OpenRouter-only args** (e.g. `models=[...]` for cross-model routing): pass
+  via `extra=`/`extra_body=`.
+- **No Responses API**: the **server-side MCP** path (which uses OpenAI's
+  Responses API) does **not** exist on OpenRouter — it raises `UnsupportedError`.
+  Text, structured, vision, audio and embeddings work normally.
+
+```python
+# cross-model routing (an OpenRouter feature) via extra_body
+LLM("openrouter", "openai/gpt-4o",
+    extra={"models": ["openai/gpt-4o", "anthropic/claude-sonnet-4.6"]})
+```
+
+## When to choose OpenRouter
+
+When you want **a single provider/key** to reach many models from different
+vendors (and their routing/fallback), without installing each vendor's SDK. Since
+it speaks the OpenAI dialect, it pairs well as a **fallback** with the native
+providers. See [Retry and fallback](/docs/retry-fallback).

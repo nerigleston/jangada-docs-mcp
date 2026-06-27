@@ -1,0 +1,216 @@
+---
+title: "RAG (embeddings + vector/hybrid search)"
+description: "jangada covers the \"LLM parts\" of RAG (embeddings + building the context) and ships an optional jangada_ai.rag module with chunking, vector store (pgvector/Mongo), and hybrid search."
+---
+
+jangada covers the "LLM parts" of RAG (embeddings + building the context) and ships
+an optional `jangada_ai.rag` module with chunking, vector store (pgvector/Mongo),
+and hybrid search.
+
+```bash
+pip install "jangada-ai[rag]"   # psycopg (pgvector) + pymongo (Mongo)
+```
+
+## Embeddings (`embed`)
+
+An optional capability, like audio: **OpenAI and Gemini** support it; **Anthropic and
+Groq** raise `UnsupportedError`.
+
+```python
+from jangada_ai import LLM
+
+emb = LLM("openai", "text-embedding-3-small")   # or ("gemini", "gemini-embedding-001")
+emb.embed("a sentence")           # -> vector (list[float])
+emb.embed(["a", "b"])             # -> list of vectors
+emb.embed(texts, task="document")  # task: "document" when indexing, "query" when searching
+```
+
+`task` becomes `task_type` in Gemini (`RETRIEVAL_DOCUMENT`/`RETRIEVAL_QUERY`);
+OpenAI ignores it. `dimensions` (OpenAI) / `output_dimensionality` (Gemini) go via `**opts`.
+
+| Provider | Embeddings? | Typical model |
+|----------|:-----------:|---------------|
+| OpenAI   | ✅ | `text-embedding-3-small` / `-large` |
+| Gemini   | ✅ | `gemini-embedding-001` |
+| Anthropic| ❌ | — (use Voyage/Cohere externally) |
+| Groq     | ❌ | — |
+
+## Full pipeline (`RAG`)
+
+```python
+from jangada_ai import LLM
+from jangada_ai.rag import RAG, vector_store
+
+emb  = LLM("openai", "text-embedding-3-small")
+chat = LLM("openai", "gpt-4o-mini")
+
+# the store is chosen by the CONNECTION STRING (just pass your DATABASE_URL_VECTOR)
+store = vector_store("postgresql://user:password@host:5432/db")   # or "mongodb+srv://..."
+rag = RAG(emb, store, chat=chat, k=5)   # k = number of chunks in the context (tunable)
+
+rag.add_document("manual.pdf", metadata={"source": "manual"})   # extract -> chunk -> embed -> store
+answer = rag.ask("How do I make a backup?", mode="hybrid")       # uses the RAG's k
+more = rag.ask("How do I make a backup?", k=10, mode="hybrid")   # per-call override
+print(answer.text)
+for s in answer.sources:
+    print(s.score, s.chunk.content[:80])
+```
+
+## Vector store by connection string
+
+`vector_store(url)` detects the adapter by scheme:
+
+| URL | Adapter | Search |
+|-----|---------|--------|
+| `postgresql://` / `postgres://` | pgvector (Postgres) | cosine (`<=>`) + full-text (`tsvector`) |
+| `mongodb://` / `mongodb+srv://` | MongoDB | Atlas `$vectorSearch` + `$text` (client-side cosine fallback) |
+| `memory` / `None` | in-memory | cosine + keyword (no deps) |
+
+Tables/collections and indexes are created automatically on first use (`setup`).
+
+### Portuguese (and other) full-text search (pgvector)
+
+`PgVectorStore` uses the Postgres `'simple'` configuration by default (no stemming
+or stopwords). For **Portuguese** content, pass `text_config="portuguese"` — it
+improves the lexical side of hybrid search:
+
+```python
+from jangada_ai.rag import vector_store
+
+store = vector_store("postgresql://...", text_config="portuguese")
+```
+
+The config is fixed at table **creation** (the `tsv` column is GENERATED), so set
+it before the first `setup`. Any Postgres `regconfig` works (`english`,
+`spanish`, ...).
+
+## Search modes
+
+`mode="vector" | "text" | "hybrid"`:
+
+- **vector** — embedding similarity only.
+- **text** — lexical: **BM25** in the in-memory store (with `rank_bm25`; falls back to
+  term counting without it) and native full-text in pgvector (`tsvector`) / Mongo (`$text`).
+- **hybrid** — combines both via **Reciprocal Rank Fusion (RRF)**.
+
+The vector × lexical balance comes from `weights=(vector, text)` or the shortcut
+**`alpha`** (0 = BM25/text only, 1 = vector only; `alpha` becomes `weights=(alpha, 1-alpha)`):
+
+```python
+RAG(emb, store, chat=chat, alpha=0.5)   # balanced; 0.0 = BM25 only, 1.0 = vector only
+```
+
+```python
+rag.search("incremental backup", k=5, mode="vector")   # vector only
+rag.search("incremental backup", k=5, mode="hybrid")   # vector + text (RRF)
+```
+
+## Reranking (biggest quality jump)
+
+The retriever brings candidates (good *recall*), but the order isn't always best.
+A **reranker** reorders candidates by relevance and keeps the best ones — the
+biggest RAG quality gain per effort. With `reranker=`, `RAG` fetches more
+candidates (`fetch_k`, default `k*4`) and returns the top `k` reordered.
+
+```python
+from jangada_ai.rag import RAG, Reranker, vector_store
+
+rag = RAG(emb, vector_store("memory"), chat=chat, reranker=Reranker.cohere())
+rag.ask("How do I run an incremental backup?")
+```
+
+Constructors: `Reranker.cohere(model="rerank-v3.5")`, `Reranker.voyage(model="rerank-2")`
+(extra `jangada-ai[rerank]` + `COHERE_API_KEY`/`VOYAGE_API_KEY`) or
+`Reranker.fn(lambda query, docs: [scores])` for a custom scorer. Per call,
+`rag.search(q, rerank=False)` disables it.
+
+## Tunable parameters
+
+Defined in `RAG(...)` (default) and/or per call:
+
+```python
+rag = RAG(
+    emb, store, chat=chat,
+    k=5,                      # number of chunks in the context
+    min_score=0.25,           # discards chunks below this similarity
+    max_context_chars=6000,   # context budget (truncates the excess)
+    chunker=my_chunker,       # function(text)->list[str] (replaces the default chunking)
+    rrf_k=60,                 # RRF constant (hybrid)
+    weights=(1.0, 0.5),       # weights (vector, text) in hybrid
+    chunk_size=1000, overlap=200,
+)
+
+# metadata filter (scope by document/source/tenant) + per-call override
+rag.ask("backup?", k=8, filter={"source": "manual"}, min_score=0.3, mode="hybrid")
+rag.search("backup?", filter={"tenant": "acme"}, mode="vector")
+```
+
+- **`filter`** becomes `metadata @> ...` in pgvector and `$match` on `metadata.<key>` in Mongo.
+- **`min_score`** uses the real similarity (cosine in vector, rank in text).
+- **`max_context_chars`** cuts the chunks that don't fit (keeps at least one).
+- **`weights=(v, t)`** weighs the vector and text rankings in the RRF fusion.
+
+## Advanced retrieval strategies (opt-in)
+
+Pass `strategy=` to `search`/`ask` (default: plain search, unchanged):
+
+- **multi-query** — the LLM generates query variations, searches all and fuses by
+  RRF. `rag.ask(q, strategy="multi_query")`.
+- **parent-document** — index small children keeping the big parent chunk; search
+  returns the parent: `rag.add_document("m.pdf", parent_chunk_size=4000)` +
+  `rag.ask(q, strategy="parent_document")`.
+- **contextual compression** — the LLM extracts only the relevant part of each
+  chunk: `rag.ask(q, compress=True)`.
+
+They combine with each other and with `reranker=`.
+
+## Incremental indexing
+
+`sync_document`/`sync_texts` reindex **only what changed** (dedup by content
+hash): embed new chunks and drop removed ones. Requires `document_id`.
+
+```python
+rag.sync_document("manual.pdf", name="manual")
+# {'added': 3, 'removed': 1, 'unchanged': 42}
+```
+
+## Which feature to use? (cheat sheet)
+
+All are **opt-in** — the lib works without any. Combine as needed:
+
+| I want… | Use |
+|---------|-----|
+| Much better ordering of chunks | `reranker=Reranker.cohere()` |
+| Catch synonyms / vague questions | `strategy="multi_query"` |
+| Better context without losing precision | `parent_chunk_size=` + `strategy="parent_document"` |
+| Fewer context tokens | `compress=True` |
+| Chunks that don't cut ideas | `chunker=semantic_chunker(emb)` |
+| Cheap reindex (only what changed) | `sync_document(...)` |
+
+Recommended recipe: **semantic chunking** (index) + **reranker** (search); add
+**multi-query** if questions are vague.
+
+```python
+from jangada_ai import LLM
+from jangada_ai.rag import RAG, Reranker, semantic_chunker, vector_store
+
+emb = LLM("openai", "text-embedding-3-small")
+rag = RAG(emb, vector_store("postgresql://..."), chat=LLM("openai", "gpt-4o-mini"),
+          chunker=semantic_chunker(emb), reranker=Reranker.cohere())
+rag.sync_document("manual.pdf", name="manual")
+ans = rag.ask("How do I run a backup?", strategy="multi_query", compress=True)
+```
+
+## Chunking
+
+```python
+from jangada_ai.rag import chunk_text
+chunk_text(text, size=1000, overlap=200)   # splits without cutting words
+```
+
+Related: [Documents](/en/docs/documents) (text extraction reused in RAG)
+and [Observability](/en/docs/observability).
+
+## Example
+
+`examples/rag_example.py` — executable script.

@@ -1,0 +1,33 @@
+---
+title: "Debug passo a passo"
+description: "Ative debug=True para um trace de cada chamada: provider/modelo, params, retries, fallback, tokens, custo e duração — por agente."
+---
+
+Ative `debug=True` para um trace de cada chamada: provider/modelo, params,
+retries, fallback, tokens, custo e duração — por agente.
+
+```python
+from jangada_ai import LLM
+
+llm = LLM("openai", "gpt-4o-mini", debug=True, name="extrator")
+llm.complete("...")
+```
+
+O `Debugger` registra os eventos da cadeia:
+
+- `start` — provider, modelo e params da tentativa
+- `retry` — erro, número da tentativa e atraso do backoff
+- `fallback` — para qual provider/modelo caiu
+- `end` — `Completion` resultante e duração em ms
+- `error` — erro normalizado quando o candidato esgota as tentativas
+
+O parâmetro `name=` rotula o agente no trace, útil quando há vários `LLM`
+diferentes numa mesma orquestração ([Flow/Graph](/docs/flows)).
+
+Relacionado: [Retry e fallback](/docs/retry-fallback), [Custo e tokens](/docs/cost),
+[Erros](/docs/errors).
+
+## Exemplo
+
+`examples/debug_params_example.py` — script executável.
+

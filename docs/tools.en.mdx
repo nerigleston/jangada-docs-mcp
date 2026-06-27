@@ -1,0 +1,102 @@
+---
+title: "Tools (function calling)"
+description: "The model can request that tools (functions) be called. The API is low-level: complete() returns the requested calls in Completion.tool_calls, you run them and send the..."
+---
+
+The model can request that **tools** (functions) be called. The API is
+**low-level**: `complete()` returns the requested calls in `Completion.tool_calls`,
+**you run them** and send the result back. Supported on **OpenAI, Groq, Anthropic
+and Gemini** — the same interface across all four.
+
+```python
+from jangada_ai import LLM, Message
+
+def get_weather(city: str, units: str = "metric") -> str:
+    """Returns the current weather for a city."""
+    return "25°C, sunny"
+
+llm = LLM("openai", "gpt-4o-mini")
+
+# 1) the model decides to call the tool
+comp = llm.complete("What's the weather in Recife?", tools=[get_weather])
+
+# 2) you run each call and build the results
+results = []
+for call in comp.tool_calls:        # call.name, call.args (dict)
+    output = get_weather(**call.args)
+    results.append(call.result(output))
+
+# 3) send back: history = question + response-with-tool-calls + results
+comp2 = llm.complete(
+    "What's the weather in Recife?",
+    history=[comp.assistant_message(), Message.tool_results(*results)],
+    tools=[get_weather],
+)
+print(comp2.text)
+```
+
+## Defining tools
+
+`tools=[...]` accepts:
+
+- **Python function** — the schema comes from the signature (type hints) + docstring;
+- **Pydantic model** — becomes the schema of the arguments;
+- **dict** `{"name", "description", "parameters"}` (JSON Schema) ready to use;
+- a **`Tool`** (via `to_tool(...)`).
+
+`tool_choice` controls the selection: `"auto"` (default), `"none"`, `"required"`, or
+the **name** of a tool to force it.
+
+## Pieces
+
+- `Completion.tool_calls`: list of `ToolCall(id, name, args)`.
+- `comp.assistant_message()`: rebuilds the assistant message (text + tool
+  calls) for the history.
+- `call.result(output)`: creates the corresponding `ToolResultPart`.
+- `Message.tool_results(*parts)`: packs the results into a message.
+
+## Prebuilt tools
+
+Jangada ships ready-made tools in `jangada_ai.prebuilt`:
+
+```python
+from jangada_ai.prebuilt import tavily_search   # web search (Tavily)
+
+llm.complete("What's the dollar exchange rate today?", tools=[tavily_search])
+# run: tavily_search(**call.args)  (needs TAVILY_API_KEY in the environment)
+```
+
+**No dependency and no key:**
+
+| Tool | What it does |
+|------|-----------|
+| `calculator` | evaluates arithmetic expressions (safe, via `ast`) |
+| `current_datetime` | current date/time (IANA timezone) |
+| `fetch_url` | downloads a page and returns the readable text |
+| `wikipedia_search` | Wikipedia summary (no key) |
+| `http_request` | generic HTTP request (GET/POST/...) |
+
+**With a key (read from the environment, or pass `api_key=`):**
+
+| Tool | Key |
+|------|-------|
+| `tavily_search` | `TAVILY_API_KEY` (or `tavily_tool(api_key=...)`) |
+| `brave_search` | `BRAVE_API_KEY` |
+| `openweather` | `OPENWEATHER_API_KEY` |
+
+> **Keyword-only** parameters (after `*`, such as `api_key`/`timeout`) are runtime
+> config and do **not** appear in the schema the model sees.
+
+The tools that call external APIs handle **every response case**: rate
+limit (429, respecting `Retry-After`), auth (401/403), 404, 5xx, timeout/
+connection and non-JSON body. Transient errors (429/5xx/timeout) get a **light
+retry with backoff**; once exhausted, the tool **returns an error message as text**
+(instead of raising an exception), so the model can decide what to do.
+
+See also [Structured output](/en/docs/structured-output) (which on Anthropic already uses
+tool-forcing under the hood) and [Observability](/en/docs/observability) (tool calls
+show up in the trace).
+
+## Example
+
+`examples/tools_example.py` — runnable script.

@@ -1,0 +1,63 @@
+---
+title: "Documentos (docx, pdf, csv, xlsx)"
+description: "Anexe arquivos a qualquer chamada com files=. Por padrão a jangada extrai o texto do arquivo localmente em vez de usar vision — é mais barato e funciona em qualquer modelo,..."
+---
+
+Anexe arquivos a qualquer chamada com `files=`. Por padrão a jangada **extrai o
+texto** do arquivo localmente em vez de usar vision — é mais barato e funciona
+em qualquer modelo, inclusive os sem visão.
+
+```bash
+pip install "jangada-ai[files]"   # pypdf, python-docx, openpyxl
+```
+
+```python
+from jangada_ai import LLM, Document
+
+llm = LLM("openai", "gpt-4o-mini")
+
+# caminhos: tipo detectado pela extensão
+llm.complete("Resuma:", files=["relatorio.pdf", "contrato.docx"])
+
+# xlsx: TODAS as abas entram, cada uma rotulada (## Aba: ...)
+llm.complete("Maior total?", files=[Document("vendas.xlsx", max_rows=200)])
+
+# bytes em memória (upload/fila) — informe o nome para detectar o tipo
+llm.parse("Há duplicadas?", Relatorio, files=[Document(blob, name="x.csv")])
+
+# forçar vision (PDF escaneado / quando o layout importa)
+llm.complete("Transcreva:", files=[Document("scan.pdf", mode="vision")])
+```
+
+## Regra de `mode`
+
+| `mode`     | Comportamento                                                     |
+|------------|------------------------------------------------------------------|
+| `"auto"`   | (padrão) extrai texto de csv/xlsx/docx/pdf-com-texto; imagem → vision |
+| `"text"`   | força extração de texto (erro se o formato não tiver texto)      |
+| `"vision"` | força o caminho de imagem                                        |
+
+## Por que não usar vision para tudo
+
+- **Mais barato**: texto custa muito menos que tokens de imagem.
+- **Funciona em qualquer modelo**, inclusive sem visão.
+- **Preserva tabelas** como markdown.
+
+Um PDF **sem** camada de texto (escaneado) levanta `DocumentError` sugerindo
+`mode="vision"` — nunca devolve um bloco vazio em silêncio.
+
+## Detalhes
+
+- `files=` existe em `complete/parse/stream` (sync e async) e convive com `images=`.
+- A conversão acontece na fronteira do client (`files.py` → `to_part()`): cada
+  arquivo vira `TextPart` ou `ImagePart`, então os adapters nunca veem formato
+  de documento.
+- Formatos: `.csv`, `.tsv`, `.xlsx`, `.xlsm`, `.docx`, `.pdf`, além de texto
+  puro (`.txt`, `.md`, `.json`, ...).
+
+Relacionado: [Vision](/docs/vision), [Structured output](/docs/structured-output).
+
+## Exemplo
+
+`examples/files_example.py` — script executável.
+

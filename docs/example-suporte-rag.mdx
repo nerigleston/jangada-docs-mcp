@@ -1,0 +1,78 @@
+---
+title: "Exemplo: Suporte com RAG"
+description: "Central de suporte que ingere uma base de conhecimento (PDF/DOCX/CSV/XLSX) e responde com contexto; um agente decide quando buscar e um guardrail filtra escopo."
+---
+
+Uma central de suporte que **ingere uma base de conhecimento** (PDF/DOCX/CSV/XLSX)
+e responde clientes com contexto recuperado. O destaque é o desenho: um `Agent`
+**decide sozinho** se precisa consultar a base (RAG como ferramenta) ou só
+responder, e um `ScopeGuard` barra perguntas fora de escopo antes de processar.
+
+**Pasta:** `pocs/suporte-rag` · **Porta sugerida:** `8001`
+
+## Recursos da jangada
+
+- `Document` + `RAG` + `vector_store()` — ingestão, chunking e busca híbrida
+- `Agent` com RAG exposto como **ferramenta** (`buscar_na_base`)
+- `ScopeGuard` — guardrail de escopo com judge, na entrada
+- `llm.astream()` — resposta em streaming
+
+## Núcleo do exemplo
+
+Ingestão (`app/routers/kb.py`):
+
+```python
+from jangada_ai import Document
+
+rag.add_document(Document(conteudo, name=nome), metadata={"fonte": nome})
+```
+
+RAG como ferramenta de um agente (`app/routers/chat.py`):
+
+```python
+def buscar_na_base(consulta: str) -> str:
+    """Busca informações na base de conhecimento da empresa.
+
+    Use SOMENTE quando a pergunta exigir fatos, políticas ou produtos
+    específicos. NÃO use para saudações ou conversa casual.
+    """
+    results = rag.search(consulta, k=k, mode="hybrid")   # busca híbrida (RRF)
+    return "\n\n".join(f"[{i+1}] {r.chunk.content}" for i, r in enumerate(results))
+
+agente = Agent(
+    tools_llm(), role="atendente virtual de suporte",
+    goal="ajudar o cliente, decidindo quando consultar a base de conhecimento",
+    tools=[buscar_na_base],
+)
+res = agente.run(pergunta, context=contexto or None)
+```
+
+Guardrail de escopo no "porteiro":
+
+```python
+from jangada_ai import LLM, ScopeGuard
+
+guard = ScopeGuard(ESCOPO, judge=judge, check="input", raise_on_block=True)
+porteiro = LLM(provider, model, max_tokens=16, guardrails=[guard], name="porteiro-escopo")
+```
+
+## Pontos de atenção
+
+- **Cheque o escopo uma vez, na entrada**, com um LLM "porteiro" barato — não
+  ponha o `ScopeGuard` no LLM que itera (o histórico cresce e a reavaliação pode
+  recusar fala válida).
+- **Deixe o agente decidir quando recuperar.** Saudações não devem disparar o
+  RAG; por isso a busca é uma ferramenta, não um passo obrigatório.
+- A persistência é `memory` por padrão; aponte `DATABASE_URL_VECTOR` para
+  pgvector/Mongo em produção.
+
+## Como rodar
+
+```bash
+cd pocs/suporte-rag
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8001   # http://localhost:8001/docs
+```
+
+Veja [RAG](/docs/rag), [Agentes](/docs/agents), [Guardrails](/docs/guardrails) e
+[Documentos](/docs/documents).

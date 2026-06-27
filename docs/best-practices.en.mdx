@@ -1,0 +1,184 @@
+---
+title: "Best practices"
+description: "Practical recommendations for using jangada in production: provider/model choice, robust structured output, guardrails, RAG, retry/fallback, cost, observability and agents."
+---
+
+A set of recommendations to get the most out of jangada in production. Each item
+links to the detailed guide for the corresponding capability.
+
+## Provider and model
+
+- **Switch by configuration, not by code.** Keep `provider`, `model` and
+  `api_key` in environment variables. The library's promise is swapping providers
+  without touching the rest — use it for env switches (dev/prod) and model A/B tests.
+- **Use the right model per task.** A strong model for reasoning/writing and a
+  cheap one (e.g. `llama-3.1-8b-instant`) for classification, routing and guardrail
+  judges. Don't pay for capability the task doesn't need.
+- **Let profiles normalize params.** Don't write `if model == ...` to tweak
+  `temperature`/`max_tokens`: the profile layer adapts the payload per model
+  (see [Parameters](/docs/parameters)).
+
+<Callout type="info">
+  Always set `max_tokens` explicitly for long extractions. Thinking models (e.g.
+  Gemini 2.5) may consume the output budget and truncate the JSON — a generous
+  `max_tokens` avoids cut-off responses.
+</Callout>
+
+## Structured output
+
+- **Always validate against the schema.** Use `parse()`/`aparse()` with a Pydantic
+  model; don't rely on manual text parsing.
+- **Keep a coercion fallback.** In some SDKs `completion.parsed` may be `None`
+  even with valid JSON in `completion.text`. Fall back to
+  `Model.model_validate_json(completion.text)` in that case.
+- Optional fields with `default=None` keep the model from inventing values when
+  the data is missing. See [Structured output](/docs/structured-output).
+
+## Guardrails
+
+- **Check scope once, on input.** In tool-loop agents, don't put `ScopeGuard` on
+  the iterating LLM — the history grows each step and re-evaluation may reject a
+  valid turn. Run the check with a "gatekeeper" LLM before starting the agent.
+- **Use `raise_on_block=True`** when you want to handle the refusal in your own
+  flow (e.g. reply with a custom message) instead of returning the refusal
+  `Completion`.
+- **`fail_closed=True`** in sensitive domains: if the judge fails, block (safe).
+  Keep it `False` when availability matters more than strictness.
+- Reserve the **blocklist** for obvious terms (regex, zero cost) and let the
+  **judge** decide semantic scope. See [Guardrails](/docs/guardrails).
+
+## RAG
+
+- **Start with hybrid search** (`mode="hybrid"`): it fuses vector and BM25 via RRF
+  and usually beats vector-only on queries with exact terms.
+- **Use `task="document"` when indexing and `task="query"` when searching** — some
+  providers (Gemini) differentiate, and the `RAG` orchestrator does it for you.
+- **Let an agent decide when to retrieve.** Not every message needs RAG: expose
+  search as a tool and let the model call it only when the question needs context
+  — greetings and small talk shouldn't hit the base.
+- **Add a `reranker`** (`Reranker.cohere()`/`voyage()`): the **biggest quality
+  gain per effort** — the retriever ensures recall, the reranker puts the right
+  chunks on top. Combine with **`semantic_chunker(emb)`** at indexing.
+- **Vague questions?** Use `strategy="multi_query"`. **Long context?**
+  `parent_chunk_size=` + `strategy="parent_document"`. **High token cost?**
+  `compress=True`.
+- **Reindex with `sync_document`** (incremental, hash dedup) instead of
+  `add_document` when re-uploading the base.
+- Tune `k`, `min_score` and `chunk` to your content. See [RAG](/docs/rag).
+
+## Retry and fallback
+
+- **Configure retry for transient errors** (429, 5xx, timeouts) with backoff and
+  `jitter=True`. Don't fail over on auth (401/403) or bad request (400/422) —
+  switching providers won't help.
+- **Chain a cheap → strong → alternative fallback** with `with_fallback`. Failover
+  happens before the first token, including in streaming.
+- See [Retry and fallback](/docs/retry-fallback) and [Errors](/docs/errors).
+
+## Cost and observability
+
+- **Read `usage` and `cost`** on each response and aggregate per flow (`Flow`/`Graph`
+  sum automatically). Override prices with `register_price` per your contract.
+- **Group calls in a `Trace`.** One request to your service = one batch of
+  observations (detect, extract, check...), easing audit and diagnosis. See
+  [Cost](/docs/cost) and [Observability](/docs/observability).
+
+## Agents and tools
+
+- **Describe each tool well.** The docstring is what the model reads to decide when
+  to call it — say what it does and *when (not) to use it*.
+- **Force arithmetic via tool.** For sums/math, use `tool_choice="required"` on a
+  calculator tool instead of trusting the model's mental math.
+- **Cap `max_iterations`** on agents to avoid long loops, and prefer a sequential
+  `Squad` when roles are clear (research → analyze → write).
+- See [Tools](/docs/tools) and [Agents](/docs/agents).
+
+## Cache (save tokens and latency)
+
+- **Start with `ExactCache`.** For prompts that repeat identically (FAQ,
+  reprocessing, user retries) it zeroes the cost from the 2nd call onward. Tune
+  `max_size` and `ttl` to your traffic.
+- **Use `SemanticCache` for paraphrases.** When questions mean the same thing
+  with different words, it compares by embeddings and hits the cache. It needs an
+  embedder LLM and a `threshold` (minimum similarity): start around `0.45` and
+  raise it if a "too similar" but wrong cached answer comes back.
+- **Keep a cache fallback.** If the embeddings provider doesn't support
+  embeddings (`UnsupportedError`) or the key is missing, fall back to
+  `ExactCache` — that's the `escritor-ia` pattern:
+
+  ```python
+  try:
+      cache = SemanticCache(embedder, threshold=0.45)
+  except UnsupportedError:
+      cache = ExactCache(max_size=512, ttl=3600)
+  llm = LLM(provider, model, cache=cache)
+  ```
+- See [Cache](/docs/cache).
+
+## Orchestration: pick the right abstraction
+
+- **`Flow`** for a **linear**, predictable pipeline (clean → structure →
+  summarize). Each `step` becomes a `{{ }}` variable for the next; a step can take
+  `schema=` to come out typed. Costs sum automatically.
+- **`Graph`** when there's **conditional routing** (e.g. classify and send to the
+  technical or the general branch). Use it when the path depends on the content.
+- **`Agent`/`Squad`** when the model itself should **decide** the steps and when
+  to call tools. Don't use an agent for a fixed pipeline — `Flow` is cheaper and
+  deterministic.
+- See [Flows](/docs/flows) and [Agents](/docs/agents).
+
+## Transcription (audio and video)
+
+- **Whisper accepts video, but has a size cap.** The STT endpoints (OpenAI/Groq)
+  transcribe `mp4` directly — they extract the audio track themselves — but
+  there's a **~25 MB** per-file limit. A meeting recording blows past that
+  easily.
+- **Pre-process the media in your service, not in the lib.** Before transcribing,
+  extract just the audio and normalize it to something light (mono, 16 kHz,
+  compressed) with `ffmpeg`. That fits under the limit, speeds up the upload and
+  standardizes the container. Keep this step in **your backend**: jangada is thin
+  by design and doesn't bundle system dependencies (like `ffmpeg`) — it just
+  forwards the bytes to the provider via `Audio.from_bytes(data, mime, name=...)`.
+- **Preserve the extension in `name`.** Whisper uses the file name to infer the
+  container; when you reprocess, return something like `meeting.mp3`.
+- **Have a fallback.** If `ffmpeg` isn't available (or fails on an exotic codec),
+  send the original file — a small `mp4` still transcribes.
+- See [Audio transcription](/en/docs/audio).
+
+## Async and FastAPI
+
+- Use `acomplete`/`aparse`/`astream` in async handlers. For the sync pipeline
+  (file parsing, batch calls), run in a thread (`anyio.to_thread.run_sync`) so you
+  don't block the event loop.
+- For streaming, return a `StreamingResponse` consuming `astream`. See
+  [Streaming](/docs/streaming).
+
+<Callout type="warn">
+  Never expose your keys in the front-end. The browser should talk to **your**
+  backend; the backend holds the providers' `api_key`.
+</Callout>
+
+## Things to know (how the library behaves)
+
+These aren't pitfalls — they're **library contracts**: some defaults to tune, some
+canonical usage patterns, and one clear responsibility boundary. All verified
+against the current behavior:
+
+| # | Point | How to handle |
+|---|-------|---------------|
+| 1 | **`max_tokens` defaults to 1024.** Truncates large lists/extractions. | In structured output the library raises `errors.TruncatedError` ("raise max_tokens") before the confusing JSON error. Set a generous `max_tokens` (e.g. 8192) — see [Parameters](/docs/parameters). |
+| 2 | **`parse`/`aparse` return a `Completion`**, not the Pydantic instance. | Always read `resp.parsed` (see [Structured output](/docs/structured-output)). |
+| 3 | **`images=` puts text first, then the images** (no interleaving by default). | To **label** each image, pass tuples: `images=[("front", img1), ("back", img2)]`. For full control, build `history=[Message("user", [...])]` — see [Messages and multimodal](/docs/vision#messages-and-interleaved-multimodal). |
+| 4 | **`{{ }}` templates** only render when you pass variable kwargs. | With no kwargs the prompt passes through intact. And plain `{ }` (literal JSON) is **never** touched, even with kwargs — JSON in the prompt is safe. |
+| 5 | **SDK-specific params** go through `extra=` (constructor) or `params=` (call). | For Gemini *thinking*, pass `thinking_budget`/`thinking_level` and the library adapts to the version — see [Gemini](/docs/llm-gemini). Reserve `extra=` for params with no canonical name or profile. |
+| 6 | **Fallback/retry don't cover malformed responses** (e.g. invalid JSON). Only API errors (timeout, rate limit, 5xx). | Pydantic's `ValidationError` escapes failover. Where you parse manually, keep your own loop/validation. |
+| 7 | **`detect_objects`/`adetect_objects` return only `Detection`** (no cost). | Use `detect_objects_full`/`adetect_objects_full`: they return a `DetectionResult` with `.detections` **and** `.completion`/`.cost`/`.usage` to close the per-job accumulator. |
+
+<Callout type="info">
+  **Multimodal cost:** images already count toward cost as *input tokens* (that's
+  how providers bill them) — nothing to configure beyond having the model in the
+  price table. **Audio** (Whisper/gpt-4o-transcribe transcription) is billed **per
+  minute**: the cost only shows up if the transcription exposes the duration — pass
+  `response_format="verbose_json"` or set `Audio.from_bytes(..., duration=...)`.
+  See [Cost](/docs/cost).
+</Callout>

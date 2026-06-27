@@ -1,0 +1,176 @@
+---
+title: "MCP (Model Context Protocol)"
+description: "Conecte servidores MCP às chamadas via mcpservers=[...]. Todos os providers suportam MCP, mas de formas diferentes — e a jangada usa o jeito nativo de cada SDK."
+---
+
+Conecte servidores MCP às chamadas via `mcp_servers=[...]`. **Todos os providers
+suportam MCP**, mas de formas diferentes — e a jangada usa o jeito nativo de cada
+SDK.
+
+## Dois modelos (importante)
+
+- **Remoto (URL)** — `MCPServer(url=...)`: o **provider** conecta no servidor MCP
+  e executa as tools (server-side). Você não roda nada. → **Anthropic, OpenAI, Groq**.
+- **Client-side (sessão)** — você passa uma `ClientSession` do pacote `mcp`: o
+  **SDK** chama as tools localmente (automatic function calling). → **Gemini**.
+
+| Provider | Modelo | Como | Observação |
+|----------|--------|------|------------|
+| Anthropic | remoto (URL) | Messages API (`mcp_servers` + `MCPToolset`, header beta) | **beta** (`mcp-client-2025-11-20`) |
+| OpenAI | remoto (URL) | **Responses API** (`tools=[{type:"mcp"}]`) | usa a Responses API, não `chat.completions` |
+| Groq | remoto (URL) | Responses API (compatível com a OpenAI) | beta — a jangada usa o **client OpenAI no `base_url` do Groq** por baixo (precisa do pacote `openai` instalado) |
+| Gemini | client-side (sessão) | `tools=[session]` (automatic function calling) | **só no async** (`acomplete`) — a sessão é assíncrona |
+
+## Remoto (Anthropic / OpenAI / Groq)
+
+```python
+from jangada_ai import LLM, MCPServer
+
+llm = LLM("anthropic", "claude-opus-4-8")   # ou ("openai", "gpt-4o"), ("groq", ...)
+comp = llm.complete(
+    "Liste as issues abertas do repositório.",
+    mcp_servers=[MCPServer(
+        url="https://mcp.exemplo.com/sse",
+        name="github",
+        authorization_token="TOKEN",     # opcional (OAuth/Bearer)
+        allowed_tools=["list_issues"],   # opcional (restringe as tools)
+    )],
+)
+print(comp.text)   # o provider já executou as tools do MCP
+```
+
+## Client-side (Gemini, async)
+
+A sessão MCP é assíncrona, então use **`acomplete`**:
+
+```python
+from mcp import ClientSession
+from mcp.client.stdio import stdio_client, StdioServerParameters
+from jangada_ai import LLM
+
+llm = LLM("gemini", "gemini-2.5-flash")
+params = StdioServerParameters(command="npx", args=["-y", "@exemplo/mcp"])
+
+async with stdio_client(params) as (read, write):
+    async with ClientSession(read, write) as session:
+        await session.initialize()
+        comp = await llm.acomplete("Use a ferramenta X", mcp_servers=[session])
+        print(comp.text)
+```
+
+> No Gemini, `complete()` (sync) com sessão levanta `UnsupportedError` pedindo
+> `acomplete()`. Passar uma `MCPServer(url=...)` no Gemini também levanta — ele é
+> client-side. E passar uma sessão no Anthropic/OpenAI/Groq levanta — eles são
+> remotos por URL.
+
+## Cliente MCP próprio + agente (portável, qualquer provider)
+
+A jangada traz seu **próprio cliente MCP** (`MCPClient`) e um **loop de agente**
+(`run_agent`) que conecta no servidor, lista as tools, e roda o ciclo
+(modelo pede → executa → reenvia) **sozinho** — em **qualquer provider** (usa
+`tools=`, suportado nos 4), independente do MCP nativo de cada SDK.
+
+```bash
+pip install "jangada-ai[mcp]"   # cliente MCP (pacote oficial `mcp`)
+```
+
+```python
+from jangada_ai import LLM
+from jangada_ai.mcp import MCPClient, run_agent
+
+llm = LLM("openai", "gpt-4o-mini")   # ou anthropic/groq/gemini
+
+async with MCPClient("https://meu-mcp/mcp/") as mcp:      # ou command=/args= (stdio)
+    ans = await run_agent(llm, "Role uns dados", client=mcp)
+    print(ans.text)
+```
+
+Por baixo: `await mcp.list_tools()` vira `tools=[...]`, e cada `tool_call` do
+modelo é executado com `await mcp.call_tool(...)` e reenviado via
+`Message.tool_results(...)` — o mesmo [tool calling](/docs/tools) de sempre, no
+automático. Quer controle total? Use `MCPClient` + `tools=` na mão.
+
+## Primitivos completos do MCP (no `MCPClient`)
+
+Além de **tools**, o `MCPClient` cobre o resto do protocolo:
+
+```python
+async with MCPClient("https://meu-mcp/mcp/") as mcp:
+    # Resources — dados/contexto que o server expõe
+    recursos = await mcp.list_resources()
+    texto    = await mcp.resource_text("file:///guia.md")
+
+    # Prompts — templates reutilizáveis do server -> vira list[Message]
+    msgs = await mcp.prompt_messages("revisar", {"texto": "..."})
+    resp = await llm.acomplete(None, history=msgs)
+```
+
+E os **recursos de cliente** (o server chama o cliente de volta), configurados no
+construtor:
+
+```python
+from jangada_ai import LLM
+
+async with MCPClient(
+    command="python", args=["server.py"],
+    roots=["./workspace"],                       # escopo de filesystem (file://)
+    sampling_llm=LLM("openai", "gpt-4o-mini"),   # o server pede geração ao SEU LLM
+    elicitation_callback=meu_handler,            # o server pede input ao usuário
+    logging_callback=meu_logger,                 # logs do server
+) as mcp:
+    ...
+```
+
+- **Roots**: o server pergunta quais diretórios pode usar; o cliente responde a lista.
+- **Sampling**: o server pede uma geração de LLM (`sampling/createMessage`) e a
+  jangada executa com o seu `LLM` — o server fica model-independent e **você**
+  controla custo/permissões.
+- **Elicitation / Logging**: você passa um callback (`async`) que o SDK chama.
+
+| Primitivo | Métodos / config |
+|---|---|
+| Tools | `list_tools` / `call_tool` |
+| Resources | `list_resources` / `read_resource` / `resource_text` |
+| Prompts | `list_prompts` / `get_prompt` / `prompt_messages` |
+| Roots | `roots=[...]` |
+| Sampling | `sampling_llm=LLM(...)` |
+| Elicitation | `elicitation_callback=...` |
+| Logging | `logging_callback=...` / `set_logging_level(...)` |
+
+## Ser um servidor MCP (expor suas tools/Agent)
+
+O jangada também pode **ser** um servidor MCP — expor suas funções/`Agent` para
+clientes (Claude Desktop, Cursor, outro agente). Construído sobre o `Server`
+**low-level** do protocolo (não FastMCP); o schema sai do `tools.py`.
+
+```python
+from jangada_ai import serve_mcp
+
+def somar(a: float, b: float) -> float:
+    "Soma dois números."
+    return a + b
+
+serve_mcp("minha-calc", tools=[somar])          # stdio (Claude Desktop/Cursor)
+```
+
+Expor um `Agent` (vira a tool `ask`):
+
+```python
+serve_mcp("suporte", agent=Agent(LLM("openai", "gpt-4o-mini"), role="suporte"))
+```
+
+Por HTTP (streamable-http) ou montando no seu ASGI:
+
+```python
+serve_mcp("minha-calc", tools=[somar], transport="streamable-http", port=8000)
+# ou: app = build_mcp_app("minha-calc", tools=[somar], path="/mcp")  # Starlette
+```
+
+Extra `jangada-ai[mcp]` (HTTP também precisa de `starlette` + `uvicorn`).
+`serve_mcp`/`build_mcp_app` = **servidor**; `MCPClient` = **cliente**.
+
+## Exemplo
+
+- `examples/mcp_example.py` — cliente MCP.
+- `examples/mcp_server_example.py` — **servidor** MCP (stdio).
+

@@ -1,0 +1,56 @@
+---
+title: "OpenAI"
+description: "Provider openai. Adapter sobre o SDK openai (dialeto chat.completions)."
+---
+
+Provider `openai`. Adapter sobre o SDK `openai` (dialeto `chat.completions`).
+
+```bash
+pip install "jangada-ai[openai]"
+```
+
+- **`provider=`**: `"openai"`
+- **Variável de ambiente**: `OPENAI_API_KEY`
+- **Base do adapter**: `_OpenAICompatible` (compartilhado com Groq)
+
+```python
+from jangada_ai import LLM
+llm = LLM("openai", "gpt-4o-mini")
+```
+
+## O que faz
+
+- **Texto** (`complete`/`acomplete`) e **streaming** (`stream`/`astream`).
+- **Structured output** (`parse`): usa o helper nativo
+  `chat.completions.parse(response_format=Modelo)` → `.message.parsed`.
+- **Vision** (`images=`): imagens viram `image_url` com data URI.
+- **Documentos** (`files=`): extração de texto local (comum a todos).
+- **Detecção de objetos** (`detect_objects`): via vision + structured.
+- **Transcrição de áudio** (`transcribe`): endpoint dedicado
+  `audio.transcriptions.create`. Modelos: `gpt-4o-transcribe`,
+  `gpt-4o-mini-transcribe`, `whisper-1`.
+
+## Estrutura e quirks
+
+- **Parâmetros**: aceita `temperature`, `max_tokens`, `top_p`, `stop`, `seed`.
+  **Não** tem `top_k` (é descartado).
+- **Perfil de modelo** (`profiles.py`): a família `gpt-5` rejeita `temperature`
+  e usa `max_completion_tokens` em vez de `max_tokens` — a jangada normaliza
+  isso automaticamente. Veja [Parâmetros e perfis](/docs/parameters).
+- **Resposta** (`Completion`): `text`, `usage` (`input_tokens`/`output_tokens`
+  derivados de `prompt_tokens`/`completion_tokens`), `raw` com o objeto nativo.
+- **Erros**: traduzidos por `errors.classify()` para a hierarquia normalizada.
+
+## Exemplo de structured
+
+```python
+from pydantic import BaseModel
+class Pessoa(BaseModel):
+    nome: str; idade: int
+
+llm.parse("Extraia: João, 30 anos.", Pessoa).parsed   # Pessoa(nome='João', idade=30)
+```
+
+Relacionado: [Matriz de capacidades](/docs/capabilities), [Groq](/docs/llm-groq)
+(mesmo dialeto), [Transcrição de áudio](/docs/audio).
+

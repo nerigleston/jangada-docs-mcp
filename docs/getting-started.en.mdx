@@ -1,0 +1,141 @@
+---
+title: "Getting started with jangada"
+description: "jangada is a thin layer over the official LLM SDKs (Anthropic, OpenAI, Groq, Gemini). The goal is to swap provider / model / api_key without changing the rest of your code."
+---
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/nerigleston/jangada-docs/blob/main/examples/notebooks/jangada_quickstart.ipynb)
+
+`jangada` is a thin layer over the official LLM SDKs (Anthropic, OpenAI,
+Groq, Gemini). The goal is to swap **provider / model / api_key** without changing
+the rest of your code.
+
+> Just want to try it out? Open the **[quickstart on Colab](https://colab.research.google.com/github/nerigleston/jangada-docs/blob/main/examples/notebooks/jangada_quickstart.ipynb)** (1 click, paste your key, and run).
+
+## Installation
+
+The base installs without any SDK. You pick the **extras** based on what you'll
+use — install only the provider you need, plus the optional capabilities.
+
+```bash
+pip install jangada-ai   # base; imported as jangada_ai
+```
+
+> The distribution name is `jangada-ai` (the name `jangada` was already taken on
+> PyPI). The package is imported as `import jangada_ai` (hyphen becomes underscore).
+> Imports are lazy: `import jangada_ai` works without any SDK installed.
+
+### Providers (choose what you'll use)
+
+| Extra | Command | Enables |
+| --- | --- | --- |
+| `anthropic` | `pip install "jangada-ai[anthropic]"` | Claude |
+| `openai` | `pip install "jangada-ai[openai]"` | GPT |
+| `groq` | `pip install "jangada-ai[groq]"` | Groq |
+| `gemini` | `pip install "jangada-ai[gemini]"` | Gemini |
+
+### Optional capabilities
+
+| Extra | Command | Enables |
+| --- | --- | --- |
+| `files` | `pip install "jangada-ai[files]"` | docx/pdf/csv/xlsx documents |
+| `rag` | `pip install "jangada-ai[rag]"` | RAG (pgvector / Mongo / BM25) |
+| `mcp` | `pip install "jangada-ai[mcp]"` | MCP client |
+
+### Shortcuts and combining
+
+| Command | What it installs |
+| --- | --- |
+| `pip install "jangada-ai[all]"` | **all providers + `files`** |
+| `pip install "jangada-ai[anthropic,groq]"` | combine extras with a comma |
+| `pip install "jangada-ai[all,rag,mcp]"` | everything, including RAG and MCP |
+
+<Callout type="warn">
+  The `[all]` extra includes **all providers + `files`**, but does **NOT** include
+  `rag` or `mcp`. Those must be added separately —
+  e.g.: `pip install "jangada-ai[all,rag,mcp]"`.
+</Callout>
+
+## First call
+
+```python
+from jangada_ai import LLM
+
+llm = LLM("anthropic", "claude-opus-4-8")
+print(llm.complete("Explain {{topic}} in 2 sentences.", topic="MCP").text)
+```
+
+`complete()` accepts `{{ }}` templates directly in the prompt — the variables come
+in as keyword args. See [Generation parameters](/en/docs/parameters) to control
+`temperature`, `max_tokens`, etc.
+
+## Signature of `complete()` and `parse()`
+
+Beyond `prompt`, both take a set of keyword args. The "happy path" shortcut
+(prompt + variables) covers most cases, but the kwargs below are what unlock a
+separate system prompt, multi-turn, and tools:
+
+```python
+def complete(
+    self,
+    prompt,                # str | None — the user prompt (accepts {{ }} templates)
+    *,
+    system=None,           # str | None — system instruction for this call only
+    history=None,          # list[Message] | None — previous turns (multi-turn)
+    images=None,           # list[str | ImagePart] | None — images (path or ImagePart)
+    files=None,            # list[Document] | None — docx/pdf/csv/xlsx (text or vision)
+    tools=None,            # list[Tool] | None — functions for function calling
+    tool_choice=None,      # str | None — force the tool choice
+    mcp_servers=None,      # list[MCPServer] | None — remote MCP servers
+    params=None,           # dict | None — per-call generation params override
+    **variables,           # variables for the {{ }} template
+) -> Completion: ...
+
+def parse(
+    self,
+    prompt,
+    schema,                # type[BaseModel] | dict — the structured-output schema
+    *,
+    system=None,
+    history=None,
+    images=None,
+    files=None,
+    params=None,
+    **variables,
+) -> Completion: ...
+```
+
+The async variants — `acomplete()` and `aparse()` — have identical signatures.
+`parse()` does **not** accept `tools`/`tool_choice`/`mcp_servers` (no function
+calling). Important detail: **`parse()` returns a `Completion`**, and the
+validated Pydantic object lives in `.parsed`:
+
+```python
+resp = llm.parse("Extract the data.", Invoice, files=["invoice.pdf"])
+invoice = resp.parsed       # ← the Pydantic instance lives here
+print(invoice.supplier, resp.cost)
+```
+
+`system=` here overrides, for this call only, the `system=` passed to the `LLM`
+constructor. For `history`, `images` and interleaved multimodal, see
+[Messages and multimodal](/en/docs/vision#messages-and-interleaved-multimodal).
+
+## Switching providers
+
+Only the first two arguments change; the rest of your code stays the same:
+
+```python
+LLM("openai", "gpt-4o-mini")
+LLM("groq", "llama-3.3-70b-versatile")
+LLM("gemini", "gemini-2.5-flash")
+```
+
+API keys come from `api_key=`, from the provider's environment variable, or from a
+`.env` file detected at import time. Precedence:
+explicit `api_key=` > environment variable > `.env`.
+
+## Next steps
+
+- [Providers and keys](/en/docs/providers)
+- [Structured output](/en/docs/structured-output)
+- [Documents (docx/pdf/csv/xlsx)](/en/docs/documents)
+- [Retry and fallback](/en/docs/retry-fallback)

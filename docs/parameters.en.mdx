@@ -1,0 +1,85 @@
+---
+title: "Generation parameters and per-model profiles"
+description: "jangada accepts canonical parameter names and each adapter translates them to the SDK's native name, discarding the unsupported ones."
+---
+
+jangada accepts **canonical** parameter names and each adapter translates them to
+the SDK's native name, discarding the unsupported ones.
+
+## Canonical parameters
+
+| Canonical     | OpenAI/Groq            | Anthropic        | Gemini                |
+|---------------|------------------------|------------------|-----------------------|
+| `temperature` | `temperature`          | `temperature`    | `temperature`         |
+| `max_tokens`  | `max_tokens`           | `max_tokens`     | `max_output_tokens`   |
+| `top_p`       | `top_p`                | `top_p`          | `top_p`               |
+| `top_k`       | *(discarded)*          | `top_k`          | `top_k`               |
+| `stop`        | `stop`                 | `stop_sequences` | `stop_sequences`      |
+| `seed`        | `seed`                 | *(discarded)*    | `seed`                |
+
+```python
+llm = LLM("anthropic", "claude-opus-4-8", temperature=0.2, max_tokens=512)
+
+# per-call override
+llm.complete("...", params={"temperature": 0.9})
+
+# clone with new defaults
+creative = llm.with_params(temperature=1.0)
+```
+
+<Callout type="warn">
+  **`max_tokens` defaults to `1024`.** If you don't pass `max_tokens`, every
+  response is cut at that limit — silently, with no error. The most common
+  symptom is **structured output of large lists coming back truncated**
+  (incomplete JSON / Pydantic failing to validate). For long extractions, raise
+  the limit explicitly:
+
+  ```python
+  llm = LLM("openai", "gpt-5", max_tokens=8192)
+  # or just for this call:
+  llm.parse("Extract every item.", Items, files=[...], params={"max_tokens": 8192})
+  ```
+</Callout>
+
+SDK-specific parameters that have no canonical name go via `extra=`.
+
+## Automatic profiles (per-model quirks)
+
+Models from the same provider sometimes have different contracts. jangada normalizes
+this in `profiles.py`, **per model**, without you needing to know:
+
+- `gpt-5` rejects `temperature` (HTTP 400) and requires `max_completion_tokens`.
+- `gemini-3.x` discards `temperature`/`top_p`/`top_k`.
+- **Gemini thinking**: you pass only `thinking_budget` (or `thinking_level`) and
+  the library adapts — on 2.5 it becomes `thinking_budget`, on 3.x it becomes
+  `thinking_level` —, wrapping it in the native `thinking_config`. See
+  [Gemini](/en/docs/llm-gemini).
+
+`thinking_budget`/`thinking_level` are **not** constructor kwargs: a loose kwarg
+would fall into `client_kwargs` (which goes to `genai.Client`, the wrong place).
+Pass them via `extra=` on the constructor **or** via `params=` on the call:
+
+```python
+# on the constructor (applies to every call of this LLM)
+llm = LLM("gemini", "gemini-3.5", extra={"thinking_level": "LOW"})
+
+# per call (overrides just this one)
+llm.complete("...", params={"thinking_budget": 1024})
+```
+
+<Callout type="warn">
+  Don't mix the two conventions in the same value: `thinking_level=500` is wrong —
+  `thinking_level` is an enum (`LOW`/`HIGH`); `500` would be a `thinking_budget`.
+  Pick **one** and the library translates it to what the model accepts.
+</Callout>
+
+Order applied in the adapter: `_translate()` (canonical → native) →
+`apply_profile()` (model quirks) → wrap `thinking_config`. When supporting a new
+model with a different contract, add a rule in `profiles.py` instead of scattering
+`if`s around.
+
+See [Providers](/en/docs/providers) and [Extending](/en/docs/extending).
+
+## Example
+
+`examples/model_profiles_example.py` — runnable script.

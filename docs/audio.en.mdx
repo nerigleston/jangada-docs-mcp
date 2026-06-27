@@ -1,0 +1,84 @@
+---
+title: "Audio transcription (speech-to-text)"
+description: "LLM.transcribe() converts audio into text. Not supported by every provider — it depends on whether the provider's API accepts audio:"
+---
+
+`LLM.transcribe()` converts audio into text. **Not supported by every
+provider** — it depends on whether the provider's API accepts audio:
+
+| Provider  | Supported? | How          | Typical models                                   |
+|-----------|----------|--------------|--------------------------------------------------|
+| OpenAI    | ✅       | dedicated endpoint | `gpt-4o-transcribe`, `gpt-4o-mini-transcribe`, `whisper-1` |
+| Groq      | ✅       | dedicated endpoint | `whisper-large-v3`, `whisper-large-v3-turbo`     |
+| Gemini    | ✅       | multimodal (`generateContent`) | `gemini-2.5-flash`, `gemini-2.5-pro` |
+| Anthropic | ❌       | —            | the Claude API does not accept audio             |
+
+> Trying to transcribe on Anthropic raises `UnsupportedError`. Claude's "voice"
+> is a product feature (app/Claude Code), not part of the model API.
+
+## Usage
+
+```python
+from jangada_ai import LLM, Audio
+
+# OpenAI
+llm = LLM("openai", "gpt-4o-transcribe")
+print(llm.transcribe("interview.mp3").text)
+
+# Groq (faster/cheaper)
+llm = LLM("groq", "whisper-large-v3-turbo")
+print(llm.transcribe("interview.mp3").text)
+
+# Gemini (multimodal)
+llm = LLM("gemini", "gemini-2.5-flash")
+print(llm.transcribe("interview.mp3").text)
+```
+
+Accepted inputs: a path, an `AudioPart`, or bytes via `Audio.from_bytes`:
+
+```python
+audio = Audio.from_bytes(blob, "audio/wav", name="speech.wav")
+llm.transcribe(audio)
+```
+
+Async: `await llm.atranscribe(audio)`.
+
+## Options per provider
+
+Extra kwargs go straight to the provider when it accepts them:
+
+```python
+# OpenAI/Groq accept language, prompt, response_format, temperature, ...
+llm.transcribe("audio.mp3", language="pt", response_format="text")
+
+# Gemini accepts prompt= as an instruction (e.g. include timestamps)
+llm.transcribe("audio.mp3", prompt="Transcribe with timestamp markers.")
+```
+
+## Fallback between audio providers
+
+Like any jangada call, `transcribe()` honors retry and fallback:
+
+```python
+from jangada_ai import LLM
+
+primary = LLM("groq", "whisper-large-v3-turbo")
+backup  = LLM("openai", "gpt-4o-transcribe")
+stt = primary.with_fallback(backup)
+
+stt.transcribe("audio.mp3")   # tries Groq; if it fails (5xx/timeout), goes to OpenAI
+```
+
+> `UnsupportedError` does **not** enter the default failover — it's a configuration
+> error (provider without audio), not a transient failure. See [Errors](/en/docs/errors) and
+> [Retry and fallback](/en/docs/retry-fallback).
+
+## Formats and limits
+
+- OpenAI/Groq: flac, mp3, mp4, mpeg, mpga, m4a, ogg, wav, webm — up to ~25 MB.
+- Gemini: inline audio up to ~20 MB for the whole request (use the SDK's Files API
+  for larger files).
+
+## Example
+
+`examples/transcribe_example.py` — runnable script.

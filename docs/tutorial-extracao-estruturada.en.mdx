@@ -1,0 +1,76 @@
+---
+title: "Tutorial: structured extraction (text and image → Pydantic)"
+description: "Goal: turn loose text or a photo into a validated Pydantic object with a single parse() call. Same code on any provider — jangada handles the mechanism (OpenAI..."
+---
+
+Goal: turn loose text or a **photo** into a validated Pydantic object with a
+single `parse()` call. Same code on any provider — jangada handles the mechanism
+(OpenAI `.parse`, Groq json_schema, Gemini `response_schema`, Anthropic
+tool-forcing).
+
+## 1. Define what you want to extract
+
+The schema is a Pydantic model. Use `Field(description=...)` to guide the model:
+
+```python
+from pydantic import BaseModel, Field
+
+class Item(BaseModel):
+    description: str
+    quantity: float
+    total_value: float
+
+class Invoice(BaseModel):
+    establishment: str
+    tax_id: str | None = Field(default=None, description="Tax ID as it appears")
+    items: list[Item]
+    amount_due: float
+```
+
+## 2. Extract from text
+
+```python
+from jangada_ai import LLM
+
+llm = LLM("openai", "gpt-4o-mini")
+invoice = llm.parse("Joe's Bakery — 2 breads $8, 1 milk $6. Total $14.", Invoice).parsed
+print(invoice.establishment, invoice.amount_due)   # Joe's Bakery 14.0
+```
+
+`parse()` returns a `Completion`; the validated object is in `.parsed`.
+
+## 3. Extract from an image (vision + structured)
+
+The same call accepts `images=` — vision and structured output together:
+
+```python
+invoice = llm.parse(
+    "Extract the data from this invoice. Transcribe exactly; do not make anything up.",
+    Invoice,
+    images=["invoice.jpg"],     # path, bytes, or base64
+).parsed
+
+for i in invoice.items:
+    print(f"{i.description}: {i.quantity:g} = {i.total_value:.2f}")
+```
+
+Use a model with vision (gpt-4o-mini, gemini-2.5-flash, claude-haiku-4-5, or a
+Groq multimodal one like `meta-llama/llama-4-scout-17b-16e-instruct`).
+
+## 4. Works on any provider
+
+```python
+for provider, model in [("openai", "gpt-4o-mini"),
+                        ("gemini", "gemini-2.5-flash"),
+                        ("anthropic", "claude-haiku-4-5-20251001")]:
+    p = LLM(provider, model).parse("John is 30 years old.", Invoice)  # simplified example
+```
+
+> **Groq:** models without `json_schema` (e.g. `llama-3.3-70b`) automatically
+> fall back to JSON Object mode — `parse()` works anyway.
+
+## Next steps
+
+- Complete recipe: `examples/cookbook/01_extracao_nota_fiscal.py`.
+- Reference: [Structured output](/en/docs/structured-output) and [Vision](/en/docs/vision).
+- For documents (docx/pdf/xlsx) without vision, see [Documents](/en/docs/documents).

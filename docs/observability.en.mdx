@@ -1,0 +1,124 @@
+---
+title: "Observability (automatic)"
+description: "Jangada sends your LLM calls to the observability platform automatically (zero-config via .env): provider, model, tokens, cost, latency, tool calls and capabilities — with batch grouping via observability_session."
+---
+
+Jangada sends your LLM calls to the observability platform **automatically**
+(zero-config): just set up your `.env`. Each call becomes an _observation_ with
+provider, model, tokens, cost, latency, tool calls and the **capabilities** of AI
+used — sent in the background, with no code instrumentation.
+
+## Enable (zero-config)
+
+```bash
+# .env
+JANGADA_OBSERVABILITY=true
+JANGADA_OBSERVABILITY_API_KEY=lobs_xxx        # project key (dashboard)
+# optional (defaults to the official platform):
+# JANGADA_OBSERVABILITY_ENDPOINT=https://api.jangada.dev.br
+```
+
+```python
+from jangada_ai import LLM
+
+llm = LLM("openai", "gpt-4o-mini")
+resp = llm.complete("Summarize: ...")   # already sent to the platform, on its own
+```
+
+The flag must be "truthy" (`1`/`true`/`yes`/`on`) **and** the token present; if
+either is missing, the mode stays off and nothing is sent (zero cost). Network
+failures never bring your app down — sending is best-effort on a daemon thread.
+
+## Grouping into a batch
+
+By default each call becomes its own trace. To group several calls of one request
+into the **same batch** (even when sent one at a time), open a scope with
+`observability_session`: a batch id is generated and every call inside shares it —
+the backend groups them into the same trace.
+
+```python
+from jangada_ai import LLM, observability_session
+
+llm = LLM("openai", "gpt-4o-mini")
+
+with observability_session(name="summary+translation", user_id="customer-123"):
+    r1 = llm.complete("Summarize: ...")     # observation in the same trace
+    r2 = llm.complete("Translate: ...")     # same — grouped by the batch id
+```
+
+`observability_session` accepts `id` (reuse an external id), `name`, `user_id`,
+`session_id` and `metadata`, and returns the batch id. It works in sync and async
+code (it uses `contextvars`).
+
+## Production feedback
+
+Capture the end user's reaction (👍/👎 or a score) and attach it to the trace
+with `feedback()`, using the **batch id** returned by `observability_session`.
+It's **best-effort** (never crashes your app): `True` if sent, `False` if the key
+is missing or the network failed.
+
+```python
+from jangada_ai import LLM, observability_session, feedback
+
+llm = LLM("openai", "gpt-4o-mini")
+
+with observability_session(name="support") as trace_id:
+    resp = llm.complete("How do I issue an invoice?")
+
+# later, when the user rates it:
+feedback(trace_id, 1, comment="solved my problem")   # 👍
+# feedback(trace_id, -1, comment="wrong answer")      # 👎
+```
+
+It becomes a `Score` on the trace (source `api`), shows up in the dashboard next
+to human 👍/👎, and closes the loop: a 👎 can be **promoted to a dataset example**
+and become a regression case in [evals](/docs/eval).
+
+## What is captured
+
+From each call: `provider`, `model`, `promptTokens`/`completionTokens` (from
+`usage`), `costUsd` (from `cost`), latency, the **input** (the messages sent to
+the model — system/user/assistant as text; very long content is truncated), the
+**output** (response text), and the **tool calls** the model requested (`tools`:
+id/name/args).
+
+Each observation has a **status**: `OK`, or **`INCOMPLETE`** when the response was
+cut off by the token limit (`finish_reason == "length"`), along with the
+normalized stop reason in **`finishReason`**. In the dashboard it becomes a badge
+(amber) and is part of the status filter.
+
+## Capabilities
+
+Each observation records **which AI capabilities** were used — `tools`, `mcp`,
+`a2a`, `vision`, `audio`, `documents`, `rag`, `structured_output`, `guardrails`,
+`cache`, `agents`, `embeddings`. In the dashboard they show up as **badges**, a
+**filter**, and the **Analytics → Usage by capability** breakdown.
+
+Detection is automatic from the call arguments: `images=` → `vision`, `files=` →
+`documents`, `tools=` → `tools`, `mcp_servers=` → `mcp`, `parse()` →
+`structured_output`, `guardrails` → `guardrails`. `tools` is also derived when the
+model requests tool calls.
+
+## In the dashboard
+
+At [app.jangada.dev.br](https://app.jangada.dev.br) you track everything:
+
+- **Traces and detail** — each batch and its observations (provider, model,
+  tokens, cost, latency, tool calls and capabilities), as a table or waterfall.
+- **Analytics** — cost, calls, tokens, error rate and latency (p50/p95/p99),
+  broken down by model, provider and capability, plus a daily time series.
+- **Filters and export** — filter by model, provider, errors, dates,
+  userId/sessionId, minimum cost and capability; export to CSV/JSON.
+- **Live tail** — traces in real time, with pause/resume.
+- **Anomalies** — automatic warnings when cost/latency/errors drift from the
+  7-day baseline.
+- **Alerts** — daily-cost or error-rate rules.
+- **Scores** — per-trace evaluations (human feedback or LLM-as-judge).
+- **Budget** — monthly cost cap per project, with tracking and projection.
+
+## Details
+
+- The `api_key` is the project key, generated in the dashboard and set in `.env`.
+- Reusing the same batch id (via `observability_session(id=...)`) **appends**
+  observations to the same trace, idempotently on the backend.
+- The cost/token fields come from [Cost and tokens](/en/docs/cost).

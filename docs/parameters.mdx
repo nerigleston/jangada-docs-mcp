@@ -1,0 +1,85 @@
+---
+title: "Parâmetros de geração e perfis por modelo"
+description: "A jangada aceita nomes canônicos de parâmetros e cada adapter os traduz para o nome nativo do SDK, descartando os não suportados."
+---
+
+A jangada aceita **nomes canônicos** de parâmetros e cada adapter os traduz para
+o nome nativo do SDK, descartando os não suportados.
+
+## Parâmetros canônicos
+
+| Canônico      | OpenAI/Groq            | Anthropic        | Gemini                |
+|---------------|------------------------|------------------|-----------------------|
+| `temperature` | `temperature`          | `temperature`    | `temperature`         |
+| `max_tokens`  | `max_tokens`           | `max_tokens`     | `max_output_tokens`   |
+| `top_p`       | `top_p`                | `top_p`          | `top_p`               |
+| `top_k`       | *(descartado)*         | `top_k`          | `top_k`               |
+| `stop`        | `stop`                 | `stop_sequences` | `stop_sequences`      |
+| `seed`        | `seed`                 | *(descartado)*   | `seed`                |
+
+```python
+llm = LLM("anthropic", "claude-opus-4-8", temperature=0.2, max_tokens=512)
+
+# override por chamada
+llm.complete("...", params={"temperature": 0.9})
+
+# clone com novos defaults
+criativo = llm.with_params(temperature=1.0)
+```
+
+<Callout type="warn">
+  **`max_tokens` tem default de `1024`.** Se você não passar `max_tokens`, toda
+  resposta é cortada nesse limite — silenciosamente, sem erro. O sintoma mais
+  comum é **structured output de listas grandes que volta truncado** (JSON
+  incompleto / Pydantic falhando ao validar). Para extrações longas, suba o
+  limite explicitamente:
+
+  ```python
+  llm = LLM("openai", "gpt-5", max_tokens=8192)
+  # ou só nesta chamada:
+  llm.parse("Extraia todos os itens.", Itens, files=[...], params={"max_tokens": 8192})
+  ```
+</Callout>
+
+Parâmetros específicos de um SDK que não têm nome canônico vão via `extra=`.
+
+## Perfis automáticos (quirks por modelo)
+
+Modelos do mesmo provider às vezes têm contratos diferentes. A jangada normaliza
+isso em `profiles.py`, **por modelo**, sem você precisar saber:
+
+- `gpt-5` rejeita `temperature` (HTTP 400) e exige `max_completion_tokens`.
+- `gemini-3.x` descarta `temperature`/`top_p`/`top_k`.
+- **Thinking do Gemini**: você passa só `thinking_budget` (ou `thinking_level`) e
+  a lib adapta — no 2.5 vira `thinking_budget`, no 3.x vira `thinking_level` —,
+  empacotando no `thinking_config` nativo. Ver [Gemini](/docs/llm-gemini).
+
+`thinking_budget`/`thinking_level` **não são** kwargs do construtor: um kwarg solto
+cairia em `client_kwargs` (vai para o `genai.Client`, lugar errado). Passe por
+`extra=` no construtor **ou** por `params=` na chamada:
+
+```python
+# no construtor (vale para todas as chamadas deste LLM)
+llm = LLM("gemini", "gemini-3.5", extra={"thinking_level": "LOW"})
+
+# por chamada (sobrescreve só nesta)
+llm.complete("...", params={"thinking_budget": 1024})
+```
+
+<Callout type="warn">
+  Não misture as duas convenções no mesmo valor: `thinking_level=500` é erro —
+  `thinking_level` é um enum (`LOW`/`HIGH`); `500` seria um `thinking_budget`.
+  Escolha **uma** e a lib traduz para o que o modelo aceita.
+</Callout>
+
+Ordem aplicada no adapter: `_translate()` (canônico → nativo) →
+`apply_profile()` (quirks de modelo) → empacota `thinking_config`. Ao suportar um
+modelo novo com contrato diferente, adicione uma regra em `profiles.py` em vez de
+espalhar `if`s.
+
+Veja [Providers](/docs/providers) e [Estendendo](/docs/extending).
+
+## Exemplo
+
+`examples/model_profiles_example.py` — script executável.
+

@@ -1,0 +1,62 @@
+---
+title: "Exemplo: Assistente pessoal"
+description: "Um agente que resolve tarefas do dia a dia (cálculos, data/hora, Wikipédia) decidindo sozinho quais ferramentas chamar."
+---
+
+Um assistente virtual que resolve tarefas do dia a dia — conversões, cálculos,
+data/hora, consultas à Wikipédia — **decidindo sozinho** quais ferramentas
+chamar a cada pergunta. É o exemplo mais direto de um `Agent` com ferramentas.
+
+**Pasta:** `pocs/assistente-pessoal` · **Porta sugerida:** `8000`
+
+## Recursos da jangada
+
+- `Agent` — loop de tool calling automático
+- Ferramentas prontas de `jangada_ai.prebuilt`: `calculator`, `current_datetime`,
+  `wikipedia_search`
+- `observability_session` — agrupa custo e iterações da requisição
+
+## Núcleo do exemplo
+
+`app/routers/assistente.py`:
+
+```python
+from jangada_ai import Agent
+from jangada_ai.prebuilt import calculator, current_datetime, wikipedia_search
+
+FERRAMENTAS = [calculator, current_datetime, wikipedia_search]
+
+@router.post("/perguntar", response_model=PerguntaResponse)
+async def perguntar(req: PerguntaRequest) -> PerguntaResponse:
+    """O assistente responde, decidindo sozinho quais ferramentas usar."""
+    llm = tools_llm(req.provider, req.model)
+    agente = Agent(
+        llm,
+        role="assistente pessoal",
+        goal="ajudar com tarefas do dia a dia usando as ferramentas disponíveis",
+        backstory="Você é um assistente prático e direto. Use as ferramentas "
+                  "sempre que elas derem uma resposta mais precisa.",
+        tools=FERRAMENTAS,
+    )
+    with observability_session(name="assistente", metadata={"mensagem": req.mensagem}):
+        res = await anyio.to_thread.run_sync(agente.run, req.mensagem)
+    return PerguntaResponse(resposta=res.text, iteracoes=res.iterations, custo_usd=res.cost)
+```
+
+## Pontos de atenção
+
+- O `agente.run` é síncrono; em handler async, rode em thread com
+  `anyio.to_thread.run_sync` para não travar o event loop.
+- O **docstring de cada ferramenta** é o que o modelo lê para decidir quando
+  usá-la — descreva bem (veja [Tools](/docs/tools)).
+
+## Como rodar
+
+```bash
+cd pocs/assistente-pessoal
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000   # http://localhost:8000/docs
+```
+
+Veja [Agentes](/docs/agents), [Tools](/docs/tools) e
+[Observabilidade](/docs/observability).

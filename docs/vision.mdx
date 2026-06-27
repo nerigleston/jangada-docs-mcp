@@ -1,0 +1,104 @@
+---
+title: "Vision (imagens)"
+description: "Imagens entram como ImagePart (bytes + mime) e são traduzidas para o formato nativo de cada SDK. Use sempre um modelo com visão."
+---
+
+Imagens entram como `ImagePart` (bytes + mime) e são traduzidas para o formato
+nativo de cada SDK. Use sempre um modelo com visão.
+
+```python
+from jangada_ai import LLM, Image
+
+llm = LLM("openai", "gpt-4o-mini")
+
+# por caminho
+llm.complete("O que aparece aqui?", images=["foto.jpg"])
+
+# por bytes ou base64
+img = Image.from_bytes(upload_bytes, "image/png")   # ou Image.from_base64
+recibo = llm.parse("Extraia o total.", Recibo, images=[img]).parsed
+```
+
+## Tradução por provider
+
+| Provider     | Formato nativo                          |
+|--------------|-----------------------------------------|
+| OpenAI/Groq  | `image_url` com data URI                |
+| Anthropic    | bloco `image` / `source` base64         |
+| Gemini       | `types.Part.from_bytes`                 |
+
+Apenas bytes circulam (use `Image.from_path/bytes/base64`). Combine com
+[Structured output](/docs/structured-output) passando `images=` no `parse()`.
+
+## Rotular cada imagem (atalho)
+
+Para **rotular** cada imagem sem montar mensagens à mão, passe tuplas
+`(rótulo, imagem)` em `images=` — a lib intercala um `TextPart` com o rótulo antes
+de cada imagem, na ordem dada:
+
+```python
+llm.parse(
+    "Compare os documentos.", Comparacao,
+    images=[("frente", Image.from_path("a_frente.jpg")),
+            ("verso",  Image.from_path("a_verso.jpg"))],
+)
+```
+
+Itens sem rótulo (um `ImagePart`/caminho normal) continuam funcionando na mesma
+lista — você mistura rotuladas e simples à vontade.
+
+## Mensagens e multimodal intercalado
+
+O atalho `images=[...]` põe o texto do prompt primeiro e as imagens depois. Para
+**controle total** da ordem (alternar vários blocos de texto e imagem, multi-turno),
+monte as mensagens à mão com `Message`, `TextPart` e `ImagePart` (todos
+importáveis de `jangada_ai`) e passe via `history=`.
+
+```python
+from jangada_ai import LLM, Message, TextPart, Image
+
+llm = LLM("openai", "gpt-4o-mini")
+
+# texto e imagens intercalados, cada uma com seu rótulo
+msg = Message("user", [
+    TextPart("Documento A (frente):"),
+    Image.from_path("a_frente.jpg"),      # Image.* devolve um ImagePart
+    TextPart("Documento A (verso):"),
+    Image.from_path("a_verso.jpg"),
+    TextPart("As duas imagens são do mesmo documento? Compare."),
+])
+
+resp = llm.complete(None, history=[msg])   # prompt=None: o conteúdo vem das mensagens
+print(resp.text)
+```
+
+`Message(role, content)` aceita `role` em `"system" | "user" | "assistant" |
+"tool"` e `content` como `str` **ou** uma lista de partes (`TextPart` /
+`ImagePart`). Para **multi-turno**, basta acumular as mensagens anteriores em
+`history`:
+
+```python
+resp1 = llm.complete("Qual a capital do Brasil?")
+resp2 = llm.complete(
+    "E a população dela?",
+    history=[
+        Message("user", "Qual a capital do Brasil?"),
+        Message("assistant", resp1.text),
+    ],
+)
+```
+
+`ImagePart` carrega só bytes (`data` + `mime_type`), então funciona igual em
+todos os providers; use os factories `Image.from_path/bytes/base64` em vez de
+montar o `ImagePart` na mão.
+
+## Vision x Documentos
+
+Para **docx/pdf/csv/xlsx**, prefira [Documentos](/docs/documents): por padrão a
+jangada extrai o texto localmente (mais barato, funciona em modelo sem visão) e
+só usa vision quando você força `mode="vision"` ou quando o PDF é escaneado.
+
+## Exemplo
+
+`examples/vision_example.py` — script executável.
+

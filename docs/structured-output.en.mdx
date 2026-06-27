@@ -1,0 +1,63 @@
+---
+title: "Structured output (Pydantic)"
+description: "A single parse() call returns a validated Pydantic instance, regardless of how each provider implements it under the hood."
+---
+
+A single `parse()` call returns a validated Pydantic instance, regardless of
+how each provider implements it under the hood.
+
+```python
+from pydantic import BaseModel
+from jangada_ai import LLM
+
+class Person(BaseModel):
+    name: str
+    age: int
+
+llm = LLM("openai", "gpt-4o-mini")
+comp = llm.parse("Extract: João is 30 years old.", Person)
+print(comp.parsed.name, comp.parsed.age)   # João 30
+```
+
+- `comp.parsed` → the Pydantic instance.
+- `comp.text` → the raw JSON returned.
+- `comp.usage` / `comp.cost` → tokens and estimated cost.
+
+<Callout type="warn">
+  Remember that `max_tokens` defaults to **1024**. Extracting **large lists**
+  without raising that limit truncates the JSON. In that case jangada raises
+  `errors.TruncatedError` (message: "raise max_tokens") **before** attempting to
+  validate — you don't get a confusing cut-off-JSON error from Pydantic. The fix is
+  to pass a higher `max_tokens` — see [Generation parameters](/en/docs/parameters).
+</Callout>
+
+## Async
+
+```python
+comp = await llm.aparse("Extract: ...", Person)
+```
+
+## How each provider resolves it
+
+| Provider  | Mechanism                                                |
+|-----------|----------------------------------------------------------|
+| OpenAI    | `chat.completions.parse(response_format=Model)`          |
+| Groq      | `json_schema` when the model supports it; otherwise **JSON Object mode** |
+| Gemini    | `config.response_schema=Model` → `resp.parsed`           |
+| Anthropic | tool-forcing (pinned `tool_choice`) → validates `tool_use` |
+
+You don't need to know which is which — `parse()`/`aparse()` take care of it. Use
+Pydantic v2 (`model_json_schema()`, `model_validate`).
+
+> **Groq — works on any model.** Only some Groq models accept
+> `json_schema` (e.g., `openai/gpt-oss-*`, `llama-4-scout`). For the rest (e.g.,
+> `llama-3.3-70b-versatile`), jangada **automatically falls back to JSON Object
+> mode**: it injects the schema into the instruction, asks for a JSON object, and validates with Pydantic.
+> You call `parse()` the same way — without knowing what the model supports.
+
+It works together with [Vision](/en/docs/vision) and [Documents](/en/docs/documents): pass
+`images=` or `files=` in the same `parse()` call.
+
+## Example
+
+`examples/structured_example.py` — runnable script.

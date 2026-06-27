@@ -1,0 +1,54 @@
+---
+title: "Flows and orchestration (Flow and Graph)"
+description: "Jangada provides two ways to chain calls, both aggregating usage/cost."
+---
+
+Jangada provides two ways to chain calls, both aggregating `usage`/`cost`.
+
+## Flow — sequential
+
+`Flow` chains `Step`s: the output of one becomes the input of the next.
+
+```python
+from jangada_ai import LLM, Flow, Step
+
+llm = LLM("openai", "gpt-4o-mini")
+
+flow = Flow([
+    Step("draft",  "Write a paragraph about {{topic}}."),
+    Step("review", "Review and improve:\n{{draft}}"),
+])
+
+result = flow.run(llm, topic="jangadas of the Northeast")
+print(result.output)     # output of the last step
+print(result.cost)       # aggregated cost of the whole chain
+```
+
+Each `Step` references previous outputs by name via the `{{ }}` template.
+
+## Graph — conditional routing + parallel
+
+`Graph` lets you branch (conditional routing) and run nodes in parallel
+(async core), joining the results.
+
+```python
+from jangada_ai import Graph
+
+# conditional routing: choose the next node based on the output
+# parallel + join: fire several nodes and combine the responses
+g = Graph()
+# ... define nodes, conditional edges, and joins ...
+res = g.run(...)        # GraphResult aggregates usage/cost
+```
+
+See the runnable examples in `examples/graph_example.py`.
+
+## Aggregated cost
+
+`FlowResult` and `GraphResult` sum `usage` and `cost` across all stages — useful
+for observability. Details in [Cost and tokens](/en/docs/cost) and, to inspect
+step by step, [Debug](/en/docs/debug).
+
+## Example
+
+`examples/graph_example.py` — runnable script.

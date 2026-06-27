@@ -1,0 +1,93 @@
+---
+title: "Tutorial: getting started (from zero to fallback)"
+description: "A ~10-minute walkthrough: install, make your first call, switch providers without changing your code, use templates, and make everything resilient with fallback. Every block is..."
+---
+
+A ~10-minute walkthrough: install, make your first call, switch providers
+without changing your code, use templates, and make everything resilient with
+fallback. Every block is runnable.
+
+## 1. Install
+
+Install the core + the SDK of the provider you'll use (optional extras):
+
+```bash
+pip install "jangada-ai[openai]"     # or [anthropic] / [groq] / [gemini] / [all]
+export OPENAI_API_KEY=sk-...
+```
+
+> `import jangada_ai` works without any SDK installed — you only install the
+> extra for whoever you're going to use.
+
+## 2. First call
+
+```python
+from jangada_ai import LLM
+
+llm = LLM("openai", "gpt-4o-mini")
+print(llm.complete("Explain what a jangada is in one sentence.").text)
+```
+
+`complete()` returns a `Completion`. Besides `.text`, it carries `.usage`
+(tokens), `.cost` (estimated cost), `.provider`, `.model`, and the native object
+in `.raw`.
+
+## 3. Switching providers — the pitch
+
+The same call works for all four. Only the `(provider, model)` pair changes:
+
+```python
+LLM("anthropic", "claude-opus-4-8").complete("Hi!")
+LLM("groq", "llama-3.3-70b-versatile").complete("Hi!")
+LLM("gemini", "gemini-2.5-flash").complete("Hi!")
+```
+
+You change **nothing** else — params, errors, and cost are normalized
+underneath. See [Providers and keys](/en/docs/providers).
+
+## 4. Templates `{{ }}`
+
+Instead of building strings by hand, pass variables as kwargs:
+
+```python
+llm.complete("Translate to {{language}}: {{phrase}}",
+             language="French", phrase="Good morning")
+```
+
+## 5. Async
+
+Every method has an equivalent `a*` version:
+
+```python
+import asyncio
+
+async def main():
+    comp = await llm.acomplete("Say hello.")
+    print(comp.text)
+
+asyncio.run(main())
+```
+
+## 6. Resilience: retry + fallback
+
+In production, a provider may hit a rate limit or return a 5xx. Define a backup:
+
+```python
+primary = LLM("openai", "gpt-4o-mini")
+backup  = LLM("anthropic", "claude-haiku-4-5-20251001")
+
+llm = primary.with_fallback(backup)
+comp = llm.complete("...")      # tries the primary (with retries); on failure, falls back to the backup
+print(comp.provider, comp.model, comp.cost)
+```
+
+Jangada tries the primary with **backoff** and only falls back to the backup on
+"failover-able" errors (rate limit, timeout, 5xx, 404). Details in
+[Retry and fallback](/en/docs/retry-fallback) and [Cost and tokens](/en/docs/cost).
+
+## Next steps
+
+- [Structured extraction](/en/docs/tutorial-extracao-estruturada) — text/image → Pydantic.
+- [RAG from scratch](/en/docs/tutorial-rag) — answer based on your documents.
+- [MCP agent from scratch](/en/docs/tutorial-agente-mcp) — the model using tools on its own.
+- Complete recipes in [`examples/cookbook/`](https://github.com/nerigleston/jangada-docs/tree/main/examples/cookbook).

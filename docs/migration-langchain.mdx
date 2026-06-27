@@ -1,0 +1,360 @@
+---
+title: "Migração do LangChain"
+description: "Vindo do LangChain? Este guia mostra, capacidade por capacidade, como cada coisa é feita no jangada — o padrão próprio da lib, não uma cópia do LangChain — e quais são os diferenciais."
+---
+
+Este guia é para quem já tem um projeto em **LangChain** e quer migrar para a
+**jangada**. Ele **não é um comparativo** "melhor/pior": a ideia é mostrar, para
+cada coisa que você fazia no LangChain, **como é o padrão equivalente no jangada**
+— que tem desenho próprio — e onde estão os diferenciais.
+
+<Callout type="info">
+  **Filosofia.** A jangada é uma **camada fina** sobre os SDKs oficiais. Fora dos
+  adapters só circulam dois tipos normalizados — `Message` e `Completion`. Não há
+  `Runnable`/LCEL, não há grafo implícito: você chama métodos (`complete`, `parse`,
+  `stream`) e compõe com Python comum (ou com `Flow`/`Graph`/`Agent` quando quiser
+  orquestração). Menos abstração entre você e a chamada, mais previsibilidade.
+</Callout>
+
+## Visão geral — onde mora cada coisa
+
+| O que você fazia no LangChain | No jangada |
+|-------------------------------|------------|
+| `init_chat_model` / `ChatOpenAI`, `ChatAnthropic`, … | `LLM("provider", "model")` ([Começando](/docs/getting-started)) |
+| `ChatPromptTemplate` + `chain.invoke` | template `{{ }}` direto em `complete()` |
+| `with_structured_output(Model)` | `parse(prompt, Model)` → `.parsed` ([Structured output](/docs/structured-output)) |
+| `model.bind_tools([...])` + loop manual | `complete(tools=[...])` ou `Agent` ([Tools](/docs/tools)) |
+| `AgentExecutor` / `create_agent` (langgraph) | `Agent` / `Squad` ([Agentes](/docs/agents)) |
+| `RecursiveCharacterTextSplitter` + vectorstore + `as_retriever` | `RAG` + `vector_store(url)` ([RAG](/docs/rag)) |
+| `PyPDFLoader`, `Docx2txtLoader`, … | `files=[Document(...)]` ([Documentos](/docs/documents)) |
+| `langchain-mcp-adapters` | `mcp_servers=` ou `MCPClient`/`run_agent` ([MCP](/docs/mcp)) |
+| `chain.stream(...)` | `stream()` / `astream()` ([Streaming](/docs/streaming)) |
+| `.with_retry()` / `.with_fallbacks([...])` | `retry_on=`/`max_retries=` + `with_fallback()` ([Retry e fallback](/docs/retry-fallback)) |
+| `set_llm_cache(...)` | `LLM(..., cache=ExactCache()/SemanticCache())` ([Cache](/docs/cache)) |
+| `RunnableSequence` (LCEL `a → b → c`) | `Flow` (sequencial) / `Graph` (condicional) ([Flows](/docs/flows)) |
+| `get_openai_callback()` / LangSmith | `Completion.cost`/`.usage` + `observability_session` ([Custo](/docs/cost), [Observabilidade](/docs/observability)) |
+
+## Inicializar e trocar de provider
+
+No LangChain você escolhe a classe (`ChatOpenAI`, `ChatAnthropic`) ou usa
+`init_chat_model("provider:model")`. No jangada há **uma classe** e a troca é nos
+dois primeiros argumentos:
+
+```python
+from jangada_ai import LLM
+
+llm = LLM("anthropic", "claude-sonnet-4-6")
+llm = LLM("openai",    "gpt-5")          # trocar provider = trocar 2 args
+resp = llm.complete("Explique jangadas em 1 frase.")
+print(resp.text, resp.cost)
+```
+
+**Diferencial.** Os **parâmetros são canônicos** (`temperature`, `max_tokens`,
+`top_p`, `top_k`, `stop`, `seed`) e cada adapter traduz para o nome nativo,
+descartando o que o provider não suporta — você não reescreve `max_tokens` →
+`max_completion_tokens` por modelo. Quirks por modelo (gpt-5 sem `temperature`,
+thinking do Gemini) são resolvidos por **perfis**, não por `if model ==`. Veja
+[Parâmetros e perfis](/docs/parameters).
+
+## Prompts e templates
+
+No LangChain o prompt é um objeto (`ChatPromptTemplate.from_messages([...])`)
+encaixado num chain. No jangada o template `{{ }}` mora **dentro do próprio
+prompt** e as variáveis vêm como keyword args:
+
+```python
+llm.complete("Resuma {{tema}} em {{n}} frases.", tema="MCP", n=2)
+# system separado, histórico e params na mesma chamada:
+llm.complete(
+    "Classifique: {{texto}}",
+    system="Você é um classificador rígido.",
+    history=[...],                 # turnos anteriores (list[Message])
+    params={"temperature": 0},
+    texto="...",
+)
+```
+
+**Diferencial.** O motor só interpola `{{ identificador }}`; chaves simples `{ }`
+(JSON literal no prompt) **nunca** são tocadas, e sem kwargs o prompt passa
+intacto. Sem `PromptTemplate`/`partial`/`format_messages` — é string + kwargs.
+
+## Encadear chamadas
+
+LCEL encadeia com o operador pipe (`prompt | model | parser`). No jangada você
+tem duas opções explícitas, conforme o fluxo:
+
+- **`Flow`** para um pipeline **linear** (cada passo vira variável `{{ }}` do
+  próximo; um passo pode sair tipado com `schema=`):
+
+```python
+from jangada_ai import Flow
+
+flow = (
+    Flow(llm)
+    .step("resumo", "Resuma:\n{{texto}}")
+    .step("titulo", "Dê um título para:\n{{resumo}}", schema=Titulo)
+)
+r = flow.run(texto="...")
+print(r.completions["titulo"].parsed, r.cost)   # custo/uso agregados
+```
+
+- **`Graph`** quando há **roteamento condicional ou paralelo** (o que no
+  ecossistema LangChain você faria com langgraph).
+
+**Diferencial.** Não há `Runnable` invisível: `Flow`/`Graph` **agregam
+`usage`/`cost`** automaticamente e o passo a passo aparece no [debug](/docs/debug).
+Para lógica simples, um `for`/`if` em Python puro já resolve — não precisa de
+abstração de composição. Veja [Flows](/docs/flows).
+
+## Structured output
+
+No LangChain: `model.with_structured_output(Model)`. No jangada: `parse()`.
+
+```python
+from pydantic import BaseModel
+
+class Pessoa(BaseModel):
+    nome: str
+    idade: int
+
+resp = llm.parse("Extraia: João tem 30 anos.", Pessoa)
+pessoa = resp.parsed           # ← instância Pydantic validada
+print(pessoa.nome, resp.cost)  # parse() devolve Completion; o objeto fica em .parsed
+```
+
+**Diferenciais.** (1) Funciona **igual em todos os providers**: OpenAI usa o
+helper nativo, Gemini usa `response_schema`, Anthropic usa tool-forcing, e Groq
+cai para *JSON object mode* automaticamente quando o modelo não suporta
+`json_schema` — você não escolhe o `method=`. (2) Se a resposta for **truncada**
+por `max_tokens`, a lib levanta `errors.TruncatedError` ("aumente max_tokens")
+**antes** do Pydantic estourar com um erro confuso de JSON cortado. Veja
+[Structured output](/docs/structured-output).
+
+## Tools (function calling)
+
+No LangChain você faz `model.bind_tools([...])` e escreve o loop de tool calling
+(ou usa um agente). No jangada o caminho baixo é `complete(tools=[...])`; o alto é
+o `Agent`, que roda o loop por você.
+
+```python
+def soma(a: int, b: int) -> int:
+    """Soma dois números."""
+    return a + b
+
+# baixo nível: você executa e reenvia
+resp = llm.complete("Quanto é 2+3?", tools=[soma], tool_choice="auto")
+for call in resp.tool_calls:
+    saida = soma(**call.args)
+    # reenvie via comp.assistant_message() + Message.tool_results(call.result(saida))
+```
+
+**Diferencial.** Funções Python comuns viram `Tool` automaticamente — o
+**docstring** é a descrição que o modelo lê. A normalização de
+`tool_calls`/`tool_results` é a mesma nos quatro providers (inclusive o detalhe de
+o Gemini casar resultado por nome). Veja [Tools](/docs/tools).
+
+## Agentes e times
+
+No LangChain moderno, agentes são montados com **langgraph** (`create_agent`) ou
+o antigo `AgentExecutor`. No jangada é o `Agent` (composição em Python puro sobre
+o loop de tools) e o `Squad` para times:
+
+```python
+from jangada_ai import Agent, Squad
+
+pesquisador = Agent(llm, role="Pesquisador", goal="levantar fatos", tools=[buscar])
+redator     = Agent(llm, role="Redator", goal="escrever o resumo")
+resp = Squad([pesquisador, redator]).run("Faça um briefing sobre X.")
+```
+
+**Diferencial.** Sem grafo nem estado implícito: `Squad` é **sequencial**
+(handoff: saída de um vira contexto do próximo) ou **hierárquico** (um `manager`
+delega), e **agrega custo/uso**. Memória de longo prazo é `RAGMemory` (reusa o
+módulo de RAG). Decompor objetivo em tarefas é `plan(llm, goal)`. Veja
+[Agentes](/docs/agents).
+
+## RAG
+
+No LangChain: text splitter + vectorstore + `as_retriever()` + um chain de QA. No
+jangada o `RAG` orquestra ingestão e busca, e `vector_store(url)` escolhe o
+backend pela string de conexão:
+
+```python
+from jangada_ai import LLM, RAG, Document
+from jangada_ai.rag import vector_store
+
+emb = LLM("openai", "text-embedding-3-small")
+rag = RAG(emb, vector_store("memory"), chat=LLM("openai", "gpt-5"))
+rag.add_document(Document(pdf_bytes, name="manual.pdf"))   # chunk + embed + store
+hits = rag.search("como faço X?", k=4, mode="hybrid")      # vetorial + BM25 (RRF)
+```
+
+**Diferenciais.** Busca **híbrida por RRF** embutida (`mode="hybrid"`, ajuste por
+`alpha`/`weights`); `vector_store("memory" | "postgres://…" | "mongodb://…")`
+detecta o backend sozinho; o chunking e o `task=document/query` (que alguns
+providers diferenciam) já são tratados. Deps de DB são import preguiçoso. Veja
+[RAG](/docs/rag).
+
+## Documentos (pdf, docx, csv, xlsx)
+
+No LangChain você escolhe um loader por formato (`PyPDFLoader`, `Docx2txtLoader`,
+`CSVLoader`, …). No jangada você passa `files=` e a lib resolve o formato:
+
+```python
+from jangada_ai import Document
+
+llm.parse("Extraia os itens.", Pedido, files=[Document(xlsx_bytes, name="p.xlsx")])
+```
+
+**Diferencial.** Por padrão (`mode="auto"`) a jangada **extrai texto local**
+(mais barato, funciona em modelo sem visão); só usa vision se você forçar
+`mode="vision"` ou se o PDF for escaneado. Na fronteira do client cada arquivo
+vira `TextPart`/`ImagePart` — os adapters não veem "formato de documento". Veja
+[Documentos](/docs/documents).
+
+## Vision e áudio
+
+Imagens entram por `images=` (caminho, bytes ou `ImagePart`); para **rotular cada
+imagem**, passe tuplas `("rótulo", img)`:
+
+```python
+llm.parse("Compare.", Comparacao, images=[("frente", "a.jpg"), ("verso", "b.jpg")])
+```
+
+Transcrição é `transcribe`/`atranscribe` (OpenAI, Groq, Gemini):
+
+```python
+from jangada_ai import Audio
+texto = llm.transcribe(Audio.from_path("reuniao.mp3")).text
+```
+
+**Diferencial.** Tudo via tipos normalizados (`ImagePart`/`AudioPart` carregam só
+bytes), igual em todos os providers. Veja [Vision](/docs/vision) e
+[Áudio](/docs/audio). Há ainda **detecção de objetos** provider-agnóstica
+(`detect_objects`) — sem equivalente direto no LangChain.
+
+## MCP
+
+No LangChain você usa `langchain-mcp-adapters`. No jangada há dois caminhos: MCP
+**remoto por URL** via `mcp_servers=` em `complete`, e um **cliente próprio** com
+loop de agente:
+
+```python
+from jangada_ai import MCPClient, run_agent
+
+async with MCPClient("https://servidor/mcp", headers={...}) as mcp:
+    resp = await run_agent(llm, "Use as ferramentas para…", client=mcp)
+```
+
+**Diferencial.** O cliente próprio cobre **todos os primitivos** do MCP (tools,
+resources, prompts) e os recursos de cliente (roots, sampling). Veja
+[MCP](/docs/mcp).
+
+## Streaming
+
+```python
+for token in llm.stream("Escreva um parágrafo sobre jangadas."):
+    print(token, end="", flush=True)
+# async: async for token in llm.astream(...)
+```
+
+**Diferencial.** O `stream` rende **strings** (tokens de texto), não objetos de
+chunk a montar. Veja [Streaming](/docs/streaming).
+
+## Retry e fallback
+
+No LangChain: `.with_retry()` e `.with_fallbacks([...])`. No jangada o retry é
+configuração do `LLM` e o fallback é encadeado:
+
+```python
+llm = LLM("anthropic", "claude-sonnet-4-6", max_retries=3).with_fallback(
+    LLM("openai", "gpt-5"),
+    LLM("groq",   "llama-3.3-70b-versatile"),
+)
+resp = llm.complete("...")
+print(resp.provider)   # quem de fato respondeu
+```
+
+**Diferencial decisivo.** O failover decide por **erro tipado** (`LLMError`:
+rate limit, timeout, 5xx, 404), **não por casar string** na mensagem de erro
+(`"503" in str(e)`). Erros de auth/bad request **não** disparam fallback (trocar
+de provider não resolve). Veja [Retry e fallback](/docs/retry-fallback) e
+[Erros](/docs/errors).
+
+## Cache
+
+No LangChain: `set_llm_cache(...)` global. No jangada o cache é **por LLM**, exato
+ou semântico:
+
+```python
+from jangada_ai import LLM, ExactCache, SemanticCache
+
+llm = LLM("openai", "gpt-5", cache=ExactCache(max_size=512, ttl=3600))
+# semântico (pega paráfrases) precisa de um embedder:
+emb = LLM("openai", "text-embedding-3-small")
+llm = LLM("openai", "gpt-5", cache=SemanticCache(emb, threshold=0.45))
+```
+
+Veja [Cache](/docs/cache).
+
+## Guardrails
+
+LangChain não tem guardrail nativo (você usa `guardrails-ai` ou lógica própria).
+No jangada o `ScopeGuard` mantém a conversa no escopo, com blocklist (regex) +
+um *judge* LLM:
+
+```python
+from jangada_ai import LLM, ScopeGuard
+
+guard = ScopeGuard("suporte do produto X", judge=llm, check="input", raise_on_block=True)
+atendente = LLM("openai", "gpt-5", guardrails=[guard])
+```
+
+Veja [Guardrails](/docs/guardrails).
+
+## Custo e observabilidade
+
+No LangChain você usa `get_openai_callback()` ou LangSmith. No jangada **toda
+resposta já traz `usage` e `cost`**, e há um agrupador de chamadas:
+
+```python
+from jangada_ai import observability_session
+
+with observability_session(name="extracao", metadata={"doc": "nf-123"}):
+    a = llm.parse("...", Nota, files=[...])
+    b = llm.complete("...")
+# a.usage, a.cost disponíveis em cada resposta; Flow/Graph/Squad agregam
+```
+
+**Diferencial.** Custo é **estimativa por token** em cada chamada (ajuste com
+`register_price`; áudio por minuto com `register_audio_price`). É observabilidade
+opcional e leve — não exige um serviço externo para ver custo/tokens. Veja
+[Custo](/docs/cost) e [Observabilidade](/docs/observability).
+
+## Diferenciais do jangada (resumo)
+
+- **Tipos normalizados na fronteira** (`Message`/`Completion`): nada de objeto
+  nativo de SDK vazando — fica em `Completion.raw` se você quiser.
+- **Params canônicos + perfis por modelo**: sem `if model ==` para quirks.
+- **Thinking do Gemini transparente**: passe `thinking_budget`/`thinking_level` e
+  a lib adapta à versão. Veja [Gemini](/docs/llm-gemini).
+- **Structured output uniforme** entre providers (com fallback automático no Groq).
+- **Fallback por erro tipado**, não por string de erro.
+- **Imports preguiçosos + dependência única**: `import jangada_ai` funciona sem
+  nenhum SDK; cada provider é um extra opcional.
+- **PT-BR** nas mensagens de erro, docstrings e docs.
+
+## Dependências — o que muda
+
+Onde você tinha vários pacotes (`langchain`, `langchain-core`,
+`langchain-openai`, `langchain-anthropic`, `langchain-google-genai`,
+`langgraph`, `langsmith`, …), passa a ter **um**:
+
+```bash
+pip install "jangada-ai[all]"        # todos os providers + documentos
+pip install "jangada-ai[all,rag,mcp]"  # + RAG + MCP
+```
+
+Menos superfície transitiva para versionar e menos quebra quando um SDK muda.
+Comece pela [instalação](/docs/getting-started#instalação) e siga para os
+[Tutoriais](/docs/tutorial-primeiros-passos).

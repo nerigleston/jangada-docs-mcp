@@ -1,0 +1,51 @@
+---
+title: "Per-provider capability matrix"
+description: "What each provider supports in jangada. The public API features are the same (complete, parse, stream, transcribe, ...); what changes is what each provider can do under..."
+---
+
+What each provider supports in jangada. The public API features are the
+same (`complete`, `parse`, `stream`, `transcribe`, ...); what changes is what
+each provider can do under the hood.
+
+| Feature                         | OpenAI | Groq | Gemini | Anthropic |
+|---------------------------------|:------:|:----:|:------:|:---------:|
+| Text (`complete`/`acomplete`)   | ✅     | ✅   | ✅     | ✅        |
+| Structured output (`parse`)     | ✅     | ✅   | ✅     | ✅        |
+| Tools / function calling        | ✅     | ✅   | ✅     | ✅        |
+| MCP (`mcp_servers=`)            | ✅ URL | ✅ URL | ✅ session⁴ | ✅ URL |
+| Embeddings (`embed`)            | ✅     | ❌   | ✅     | ❌        |
+| Streaming (`stream`/`astream`)  | ✅     | ✅   | ✅     | ✅        |
+| Vision / images (`images=`)     | ✅     | ⚠️¹  | ✅     | ✅        |
+| Documents (`files=`)²           | ✅     | ✅   | ✅     | ✅        |
+| Object detection                | ✅     | ⚠️¹  | ✅³    | ⚠️        |
+| Audio transcription (`transcribe`) | ✅ | ✅   | ✅     | ❌        |
+| `top_k` param                   | ❌     | ❌   | ✅     | ✅        |
+| `seed` param                    | ✅     | ✅   | ✅     | ❌        |
+| `stop` param                    | ✅     | ✅   | ✅ (`stop_sequences`) | ✅ (`stop_sequences`) |
+
+¹ Depends on the model: vision on Groq requires a vision-capable model (e.g., the
+Llama vision family); text-only models don't accept images.
+² `files=` extracts text **locally** (docx/pdf/csv/xlsx) and sends it as text —
+that's why it works everywhere. See [Documents](/en/docs/documents).
+³ The bounding box convention (0–1000) is native to Gemini, which is the most precise.
+⁴ MCP on Gemini is **client-side per session** and async only (`acomplete`); the
+others are **remote per URL** (server-side). See [MCP](/en/docs/mcp).
+
+## How each one implements structured output
+
+| Provider  | Mechanism                                                |
+|-----------|----------------------------------------------------------|
+| OpenAI    | `chat.completions.parse(response_format=Modelo)`         |
+| Groq      | `response_format={"type":"json_schema",...}` + validation |
+| Gemini    | `config.response_schema=Modelo` → `resp.parsed`          |
+| Anthropic | tool-forcing (`tool_choice` fixed) → validates `tool_use` |
+
+## Per-provider detail
+
+- [OpenAI](/en/docs/llm-openai)
+- [Groq](/en/docs/llm-groq)
+- [Gemini](/en/docs/llm-gemini)
+- [Anthropic](/en/docs/llm-anthropic)
+
+The canonical parameters and per-model profiles (gpt-5, gemini-3.x) are in
+[Parameters and profiles](/en/docs/parameters).

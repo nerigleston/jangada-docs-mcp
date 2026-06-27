@@ -1,0 +1,36 @@
+---
+title: "Streaming"
+description: "Receive incremental tokens with stream() (sync) or astream() (async)."
+---
+
+Receive incremental tokens with `stream()` (sync) or `astream()` (async).
+
+```python
+for token in llm.stream("Tell me about {{x}}", x="João Pessoa"):
+    print(token, end="")
+```
+
+```python
+async for token in llm.astream("..."):   # e.g.: FastAPI StreamingResponse
+    ...
+```
+
+## Retry and fallback in streaming
+
+Retry and fallback happen **before the first token**: if opening the
+stream fails with a transient error, jangada retries (backoff) and, if
+needed, falls back to the next candidate — all before you receive any
+content. Once the first token is out, the stream runs to the end.
+
+See [Retry and fallback](/en/docs/retry-fallback) for the full policy.
+
+## Notes
+
+- `stream()`/`astream()` accept the same `system=`, `history=`, `images=`,
+  `files=`, and `params=` as the other calls.
+- For cost and tokens use the non-stream calls (`complete`/`parse`), which
+  return `usage`/`cost` in the response — see [Cost and tokens](/en/docs/cost).
+
+## Example
+
+`examples/async_example.py` — executable script.

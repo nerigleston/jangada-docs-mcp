@@ -1,0 +1,32 @@
+---
+title: "Step-by-step debug"
+description: "Enable debug=True for a trace of every call: provider/model, params, retries, fallback, tokens, cost and duration — per agent."
+---
+
+Enable `debug=True` for a trace of every call: provider/model, params,
+retries, fallback, tokens, cost and duration — per agent.
+
+```python
+from jangada_ai import LLM
+
+llm = LLM("openai", "gpt-4o-mini", debug=True, name="extractor")
+llm.complete("...")
+```
+
+The `Debugger` records the chain's events:
+
+- `start` — provider, model and params of the attempt
+- `retry` — error, attempt number and backoff delay
+- `fallback` — which provider/model it fell through to
+- `end` — resulting `Completion` and duration in ms
+- `error` — normalized error when the candidate exhausts its attempts
+
+The `name=` parameter labels the agent in the trace, useful when there are several
+different `LLM`s in the same orchestration ([Flow/Graph](/en/docs/flows)).
+
+Related: [Retry and fallback](/en/docs/retry-fallback), [Cost and tokens](/en/docs/cost),
+[Errors](/en/docs/errors).
+
+## Example
+
+`examples/debug_params_example.py` — runnable script.

@@ -1,0 +1,80 @@
+---
+title: "Exemplo: Pesquisa com agentes"
+description: "Agentes autônomos que investigam tarefas com ferramentas, times com handoff (Squad), planejamento, failover entre providers e MCP remoto."
+---
+
+Uma plataforma de pesquisa com agentes autônomos. Mostra as quatro formas de
+orquestração da jangada lado a lado: **agente único**, **time (`Squad`)**,
+**planejamento (`plan`)** e **failover (`with_fallback`)** — além de integração
+com servidores **MCP** remotos.
+
+**Pasta:** `pocs/pesquisa-agentes` · **Porta sugerida:** `8004`
+
+## Recursos da jangada
+
+- `Agent` — agente autônomo com loop de tools
+- `Squad` — time de agentes com handoff sequencial
+- `plan()` — decompõe um objetivo em tarefas
+- `with_fallback()` — failover automático entre providers
+- `MCPClient` + `run_agent()` — agente sobre tools de um servidor MCP
+
+## Núcleo do exemplo
+
+Agente único (`app/routers/pesquisa.py`):
+
+```python
+from jangada_ai import Agent
+from jangada_ai.prebuilt import calculator, current_datetime, wikipedia_search
+
+agente = Agent(
+    llm, role="Pesquisador", goal="responder com precisão usando as ferramentas",
+    tools=[wikipedia_search, calculator, current_datetime],
+)
+res = agente.run(req.tarefa)
+```
+
+Time com handoff:
+
+```python
+from jangada_ai import Squad
+
+pesquisador = Agent(llm, role="Pesquisador", goal="levantar fatos e fontes", tools=[wikipedia_search])
+analista   = Agent(llm, role="Analista", goal="organizar os achados em tópicos")
+redator    = Agent(llm, role="Redator", goal="escrever um briefing claro e conciso")
+res = Squad([pesquisador, analista, redator]).run(req.tarefa)
+```
+
+Failover entre providers:
+
+```python
+llm = primario.with_fallback(reserva)   # cai p/ o reserva em 429/5xx/timeout
+comp = await llm.acomplete(req.prompt)
+print(comp.provider, comp.model)        # quem de fato respondeu
+```
+
+Agente sobre MCP remoto (`app/routers/mcp.py`):
+
+```python
+from jangada_ai import MCPClient, run_agent
+
+async with MCPClient(url, headers={"Authorization": f"Bearer {token}"}) as mcp:
+    ans = await run_agent(llm, req.tarefa, client=mcp)
+```
+
+## Pontos de atenção
+
+- Prefira `Squad` sequencial quando os papéis são claros
+  (pesquisar → analisar → redigir); é mais previsível que um agente único longo.
+- O `with_fallback` faz failover **antes do primeiro token** — não troca de
+  provider no meio de uma resposta.
+
+## Como rodar
+
+```bash
+cd pocs/pesquisa-agentes
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8004   # http://localhost:8004/docs
+```
+
+Veja [Agentes](/docs/agents), [Retry e fallback](/docs/retry-fallback) e
+[MCP](/docs/mcp).

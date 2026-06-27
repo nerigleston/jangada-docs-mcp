@@ -1,0 +1,131 @@
+---
+title: "Evaluation (evals)"
+description: "Datasets, Evaluators and Experiments: measure quality and compare models by score × cost × latency. Heuristic (Evaluator.fn) + LLM judge (Evaluator.judge); runs offline and, with push=True, shows up in the dashboard (Experiments/Datasets)."
+---
+
+The lib promises to **swap provider/model without changing your code**. _Evals_
+are the other half: **proving the swap didn't hurt quality or blow up cost**. You
+run a `target` over a set of cases (`Dataset`), score it with `Evaluator`s
+(heuristic and/or an LLM judge) and compare runs (`Experiment`) by
+**accuracy × $ × latency**.
+
+It works **100% offline** (like observability): `evaluate()` returns the scores
+locally; sending them to the dashboard is optional (`push=True`).
+
+```python
+from jangada_ai import LLM
+from jangada_ai.eval import Evaluator, Dataset, evaluate
+```
+
+## The pieces
+
+| Piece | Answers |
+|-------|---------|
+| `Dataset`/`Example` | "Which cases do I measure against?" (inputs + reference) |
+| `Evaluator` | "Is this output good?" (heuristic or LLM judge) |
+| `evaluate()` | runs the `target` over the dataset, applies evaluators, aggregates |
+| `ExperimentResult` | the result: per-evaluator scores, cost, p50, errors |
+
+## 1. Dataset — the cases
+
+An `Example` has `inputs` (fed to the `target`), `reference` (optional ground
+truth) and `metadata`.
+
+```python
+ds = Dataset.from_records([
+    {"inputs": {"q": "Capital of France?"}, "reference": "Paris"},
+    {"inputs": {"q": "2 + 2?"},            "reference": "4"},
+], name="questions")
+
+# or from JSONL: {"inputs": {...}, "reference": ...} per line
+ds = Dataset.from_jsonl("cases.jsonl", name="cases")
+```
+
+## 2. Evaluators — the scores
+
+### Heuristic (`Evaluator.fn`)
+
+A pure `(output, reference)` function → **float**, **bool** or `EvalResult`. No
+network.
+
+```python
+exact = Evaluator.fn(
+    "exact",
+    lambda out, ref: out.text.strip().lower() == ref.lower(),
+)
+```
+
+`out` is whatever the `target` returned (typically a `Completion`, with `.text`,
+`.parsed`, `.cost`); `ref` is the example's `reference`.
+
+### LLM judge (`Evaluator.judge`)
+
+An LLM scores the output — under the hood a `parse()` with a fixed
+`{score, reason}` schema. Use it for subjective criteria (usefulness, tone,
+semantic equivalence).
+
+```python
+useful = Evaluator.judge(
+    "useful",
+    "Does the answer correctly and usefully address the question? score 0 to 1.",
+    judge=LLM("openai", "gpt-4o-mini"),  # cheap judge, separate from the target
+)
+```
+
+## 3. evaluate() — run and aggregate
+
+```python
+def target(ex):
+    return LLM("openai", "gpt-4o-mini").complete(ex.inputs["q"])
+
+res = evaluate(ds, target=target, evaluators=[exact, useful], name="baseline")
+print(res.summary())
+# {'exact': 0.9, 'useful': 0.95, 'costUsd': 0.0021, 'p50_ms': 740, 'count': 2, 'errors': 0}
+```
+
+`summary()` includes: per-evaluator average, `costUsd` (target cost), `evalCostUsd`
+(judge cost), `p50_ms`, `count` and `errors`. Each item is in `res.runs`. A
+`target` that throws becomes a run with `error` — it **doesn't** crash the
+experiment.
+
+Async: `aevaluate(..., max_concurrency=8)` (the `target` may be a coroutine).
+
+## 4. Compare models (the point)
+
+Same dataset, different models — decide with evidence:
+
+```python
+def target(model):
+    return lambda ex: LLM("openai", model).complete(ex.inputs["q"])
+
+gpt   = evaluate(ds, target=target("gpt-5"),          evaluators=[exact, useful], name="gpt5")
+flash = evaluate(ds, target=target("gemini-3-flash"), evaluators=[exact, useful], name="flash")
+# gpt5:  {'exact': 0.94, 'useful': 0.97, 'costUsd': 0.21, ...}
+# flash: {'exact': 0.90, 'useful': 0.95, 'costUsd': 0.02, ...}  → ~10× cheaper
+```
+
+## 5. Send to the dashboard (`push=True`)
+
+With observability configured (same project key), `push=True` sends the
+experiment to the backend — it shows up in the dashboard under **Experiments**
+(comparison table) and **Datasets** (score-over-time chart).
+
+```python
+res = evaluate(
+    ds, target=target("gpt-5"), evaluators=[exact, useful], name="gpt5",
+    push=True, target_info={"provider": "openai", "model": "gpt-5"},
+)
+print(res.pushed, res.push_error)  # True None
+```
+
+`push` is **best-effort** (network failure / missing key won't raise — it sets
+`res.pushed`/`res.push_error`). Each run stores the `traceId` when available,
+linking the score back to the trace that produced it.
+
+## How it works
+
+- `Evaluator.fn` runs locally; `Evaluator.judge` does a `parse()` on the judge
+  with a `{score, reason}` schema.
+- `evaluate()` measures latency, reads `Completion.cost` from the target, sums
+  judge cost into `evalCostUsd`, and computes average/p50/errors.
+- `push` reuses the observability config (`POST /v1/experiments`).

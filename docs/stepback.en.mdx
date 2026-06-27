@@ -1,0 +1,72 @@
+---
+title: "Step-back prompting"
+description: "step_back() turns a specific question into a conceptually broader one, to retrieve background context in RAG. Works on any provider."
+---
+
+`step_back()` turns a specific question into **a conceptually broader one**. It's
+a query-transformation technique for RAG: the more general question retrieves
+**broad-context documents** (principles, categories, fundamentals) that searching
+the original question alone tends to miss. The pattern is to search with **both**
+and merge the passages.
+
+```python
+from jangada_ai import LLM, step_back
+
+llm = LLM("openai", "gpt-4o-mini")
+broader = step_back(llm, "What are the treatment options for cataracts?")
+print(broader)
+# "What are the surgical and pharmacological approaches for lens opacity
+#  management?"
+```
+
+It's just LLM + structured output, so it **works on any provider** — it doesn't
+depend on vision or the `[rag]` extra.
+
+## Typical use with RAG
+
+Search the context with the original question **and** the step-back one, then
+merge the results before answering:
+
+```python
+from jangada_ai import LLM, step_back
+from jangada_ai.rag import RAG, vector_store
+
+llm = LLM("openai", "gpt-4o-mini")
+emb = LLM("openai", "text-embedding-3-small")
+rag = RAG(emb, vector_store("postgresql://..."), chat=llm)
+
+question = "What are the treatment options for cataracts?"
+broader = step_back(llm, question)
+
+specific = rag.search(question)
+general = rag.search(broader)
+# combine `specific` + `general` (dedupe) and answer with the merged context.
+```
+
+## Parameters
+
+```python
+step_back(
+    llm,
+    query,                          # the specific question
+    instructions="Medical domain; answer in English.",  # ADDS to the default prompt
+    prompt=None,                    # overrides the whole instruction (optional)
+    params={"temperature": 0.2},   # generation params (optional)
+)
+```
+
+- `instructions` is **added** to the default prompt — useful to pin the domain,
+  language or what to emphasize, without losing the schema-guaranteed format.
+- `prompt` **replaces** the whole instruction (the schema still guarantees the
+  output). When overriding, include the question in your text — `{query}` is only
+  interpolated in the default prompt.
+
+Async version: `await astep_back(llm, query, ...)`.
+
+## Robustness
+
+Parsing is **tolerant**: it uses the structured output when valid, falls back to
+the raw text if the model ignores the schema and, as a last resort, returns the
+`query` itself — it **never** returns empty.
+
+See also [RAG](/en/docs/rag) and [Structured output](/en/docs/structured-output).

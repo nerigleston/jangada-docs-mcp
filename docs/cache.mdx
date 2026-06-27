@@ -1,0 +1,65 @@
+---
+title: "Cache de respostas"
+description: "Cacheie respostas do LLM para economizar tokens e latência — exato (ExactCache) e semântico (SemanticCache, por similaridade de embeddings). Plugado via LLM(..., cache=...)."
+---
+
+A jangada pode **cachear respostas do LLM** para economizar tokens e latência —
+plugado via `LLM(..., cache=...)`. O cliente consulta o cache **antes** de chamar
+o provider e o popula **depois** de uma resposta bem-sucedida. Dois modos: **exato**
+e **semântico**.
+
+## Cache exato
+
+Acerta só quando a requisição é **idêntica** (mesmo método, escopo
+`provider`/`model`/`params` e mensagens). LRU com `max_size` e `ttl` opcionais,
+sem custo de embedding.
+
+```python
+from jangada_ai import LLM, ExactCache
+
+llm = LLM("openai", "gpt-4o-mini", cache=ExactCache(max_size=512, ttl=3600))
+llm.complete("Resuma a teoria da relatividade.")   # chama o provider
+llm.complete("Resuma a teoria da relatividade.")   # vem do cache (idêntico)
+```
+
+## Cache semântico
+
+Acerta quando a pergunta é **suficientemente parecida** com uma anterior do mesmo
+escopo (similaridade de cosseno ≥ `threshold`). Reusa `LLM.embed` + um
+`vector_store` do RAG. Após o acerto semântico, aplica um **filtro exato de
+escopo** (provider/model/params/método) para alta precisão.
+
+```python
+from jangada_ai import LLM, SemanticCache
+
+embedder = LLM("openai", "text-embedding-3-small")
+cache = SemanticCache(embedder, threshold=0.85)
+
+llm = LLM("openai", "gpt-4o-mini", cache=cache)
+llm.complete("Qual a capital da França?")
+llm.complete("Me diga a capital francesa.")   # paráfrase → acerta o cache
+```
+
+### Calibre o `threshold` por modelo de embedding
+
+A escala de cosseno **varia muito entre modelos** — não existe número mágico:
+
+| Modelo de embedding | Paráfrase (≈) | Pergunta distinta (≈) |
+|---|---|---|
+| `text-embedding-3-small` (OpenAI) | 0.62 | 0.11 |
+| `gemini-embedding-001` (Gemini) | 0.90 | 0.49 |
+
+O padrão é `0.85` (meio-termo). **Meça paráfrases vs. perguntas distintas no seu
+modelo** e escolha um corte entre as duas distribuições. Alto demais = cache
+morto; baixo demais = respostas erradas (falso-positivo).
+
+## O que **não** é cacheado
+
+- Chamadas com **tools** ou **MCP** (`tools=`/`mcp_servers=`).
+- **Streaming** (`stream`/`astream`).
+- Respostas vindas de **fallback** (só o candidato primário popula o cache).
+- Recusas de **guardrail**.
+
+`complete`/`parse` e suas versões async compartilham a mesma chave. O cache é
+**local ao processo** (a `Completion` fica em memória; o vector store é usado só
+para a similaridade).

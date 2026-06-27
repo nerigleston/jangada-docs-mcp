@@ -1,0 +1,43 @@
+---
+title: "Exemplos de código"
+description: "Aplicações completas (FastAPI) que mostram a jangada em cenários reais: agentes com ferramentas, vision + structured output, RAG, transcrição de reuniões, cache e fallback."
+---
+
+Cada exemplo é uma aplicação **FastAPI** pequena e funcional, focada em um
+cenário real. São POCs pensadas para você ler o "núcleo" do uso da jangada e
+copiar o padrão para o seu projeto — não apenas snippets soltos.
+
+<Callout type="info">
+  Todos os exemplos seguem o mesmo esqueleto: `app/main.py` (FastAPI),
+  `app/routers/*` (endpoints), `app/core/*` (config, instância de `LLM`,
+  observabilidade) e, quando há saída tipada, `app/schemas/*` (modelos Pydantic).
+  As chaves dos providers vêm do `.env`.
+</Callout>
+
+## Os exemplos
+
+| Exemplo | O que demonstra | Recursos principais |
+|---------|-----------------|---------------------|
+| [Assistente pessoal](/docs/example-assistente-pessoal) | Agente que decide sozinho quais ferramentas usar | `Agent`, tools prontas, observabilidade |
+| [Escritor IA](/docs/example-escritor-ia) | Reescrita/tradução/resumo com cache | Templates `{{ }}`, `ExactCache`/`SemanticCache` |
+| [Fiscal Vision](/docs/example-fiscal-vision) | Leitura de notas fiscais por foto | `Image`, `parse` (structured output), `detect`, tools |
+| [Pesquisa com agentes](/docs/example-pesquisa-agentes) | Agentes autônomos, times e failover | `Agent`, `Squad`, `plan`, `with_fallback`, MCP |
+| [Assistente de reuniões](/docs/example-reuniao-assistente) | Áudio → ata estruturada → resumo | `Audio`/transcrição, `Flow`, streaming |
+| [Suporte com RAG](/docs/example-suporte-rag) | Atendimento com base de conhecimento | `RAG`, `Agent`, `ScopeGuard`, streaming |
+
+## Como rodar (padrão)
+
+Todas as POCs rodam igual — só muda a porta:
+
+```bash
+cd pocs/<nome-da-poc>
+pip install -r requirements.txt        # ou use o venv do workspace
+cp .env.example .env                   # preencha as chaves dos providers
+uvicorn app.main:app --reload --port 8000
+# abra http://localhost:8000/docs (Swagger interativo)
+```
+
+> Os requirements normalmente trazem `jangada-ai[all,rag,mcp]` para habilitar
+> todos os providers + documentos + RAG + MCP. Instale só os extras que o
+> exemplo usar se quiser um ambiente mais enxuto (veja
+> [Instalação](/docs/getting-started#instalação)).

@@ -1,0 +1,187 @@
+---
+title: "Melhores práticas"
+description: "Recomendações práticas para usar a jangada em produção: escolha de provider/model, structured output robusto, guardrails, RAG, retry/fallback, custo, observabilidade e agentes."
+---
+
+Um apanhado de recomendações para tirar o máximo da jangada em produção. Cada
+item aponta para o guia detalhado da capacidade correspondente.
+
+## Provider e modelo
+
+- **Troque por configuração, não por código.** Mantenha `provider`, `model` e
+  `api_key` em variáveis de ambiente. A promessa da lib é trocar o provider sem
+  mexer no resto — aproveite isso para alternar entre ambientes (dev/prod) e
+  fazer testes A/B de modelo.
+- **Use o modelo certo para cada tarefa.** Um modelo forte para raciocínio/escrita
+  e um modelo barato (ex.: `llama-3.1-8b-instant`) para classificação, triagem e
+  judges de guardrail. Não pague por capacidade que a tarefa não exige.
+- **Deixe os perfis normalizarem os params.** Não escreva `if model == ...` para
+  ajustar `temperature`/`max_tokens`: a camada de perfis já adapta o payload por
+  modelo (ver [Parâmetros](/docs/parameters)).
+
+<Callout type="info">
+  Sempre defina `max_tokens` explicitamente em extrações longas. Modelos com
+  *thinking* (ex.: Gemini 2.5) podem consumir o orçamento de saída e truncar o
+  JSON — um `max_tokens` folgado evita respostas cortadas.
+</Callout>
+
+## Structured output
+
+- **Valide sempre contra o schema.** Use `parse()`/`aparse()` com um modelo
+  Pydantic; não confie em parsing manual de texto.
+- **Tenha um fallback de coerção.** Em alguns SDKs `completion.parsed` pode vir
+  `None` mesmo com JSON válido em `completion.text`. Caia para
+  `Model.model_validate_json(completion.text)` nesse caso.
+- Campos opcionais com `default=None` evitam que o modelo invente valores quando
+  o dado não existe. Veja [Structured output](/docs/structured-output).
+
+## Guardrails
+
+- **Cheque o escopo na entrada, uma vez.** Em agentes com loop de ferramentas,
+  não coloque o `ScopeGuard` no LLM que itera — a cada passo o histórico cresce e
+  a reavaliação pode recusar uma fala válida. Faça a checagem com um LLM
+  "porteiro" antes de iniciar o agente.
+- **Use `raise_on_block=True`** quando quiser tratar a recusa no seu fluxo (ex.:
+  responder com uma mensagem própria) em vez de devolver a `Completion` de recusa.
+- **`fail_closed=True`** em domínios sensíveis: se o judge falhar, barra (seguro).
+  Deixe `False` quando disponibilidade importa mais que rigor.
+- Reserve a **blocklist** para termos óbvios (regex, custo zero) e deixe o
+  **judge** decidir o escopo semântico. Veja [Guardrails](/docs/guardrails).
+
+## RAG
+
+- **Comece com busca híbrida** (`mode="hybrid"`): combina vetorial e BM25 por RRF
+  e costuma superar só vetorial em perguntas com termos exatos.
+- **Use `task="document"` ao indexar e `task="query"` ao buscar** — alguns
+  providers (Gemini) diferenciam, e o orquestrador `RAG` já faz isso por você.
+- **Deixe um agente decidir quando recuperar.** Nem toda mensagem precisa de RAG:
+  exponha a busca como uma ferramenta e deixe o modelo chamá-la só quando a
+  pergunta exigir contexto — saudações e conversa não devem disparar a base.
+- **Adicione um `reranker`** (`Reranker.cohere()`/`voyage()`): é o **maior ganho
+  de qualidade por esforço** — o retriever garante recall, o reranker põe os
+  trechos certos no topo. Combine com **`semantic_chunker(emb)`** no índice
+  (chunks que não cortam ideias).
+- **Perguntas vagas?** Use `strategy="multi_query"` (o LLM gera variações e funde).
+  **Contexto longo?** `parent_chunk_size=` + `strategy="parent_document"`.
+  **Custo de tokens alto?** `compress=True`.
+- **Reindexe com `sync_document`** (incremental, dedup por hash) em vez de
+  `add_document` quando a base é re-subida — só reembeda o que mudou.
+- Ajuste `k`, `min_score` e `chunk` ao seu conteúdo. Veja [RAG](/docs/rag).
+
+## Retry e fallback
+
+- **Configure retry para erros transitórios** (429, 5xx, timeouts) com backoff e
+  `jitter=True`. Não faça failover em erros de auth (401/403) ou bad request
+  (400/422) — trocar de provider não resolve.
+- **Encadeie um fallback barato → forte → alternativo** com `with_fallback`. O
+  failover acontece antes do primeiro token, inclusive em streaming.
+- Veja [Retry e fallback](/docs/retry-fallback) e [Erros](/docs/errors).
+
+## Custo e observabilidade
+
+- **Leia `usage` e `cost`** em cada resposta e agregue por fluxo (`Flow`/`Graph`
+  somam automaticamente). Sobrescreva preços com `register_price` conforme seu
+  contrato.
+- **Agrupe chamadas num `Trace`.** Uma requisição do seu serviço = um lote de
+  observações (detecção, extração, conferência...), facilitando auditoria e
+  diagnóstico. Veja [Custo](/docs/cost) e [Observabilidade](/docs/observability).
+
+## Agentes e ferramentas
+
+- **Descreva bem cada ferramenta.** O docstring é o que o modelo lê para decidir
+  quando chamá-la — diga o que faz e *quando (não) usar*.
+- **Force aritmética via tool.** Para somas/contas, use `tool_choice="required"`
+  numa ferramenta de cálculo em vez de confiar na conta "de cabeça" do modelo.
+- **Limite `max_iterations`** em agentes para evitar loops longos, e prefira
+  `Squad` sequencial quando os papéis são claros (pesquisar → analisar → redigir).
+- Veja [Tools](/docs/tools) e [Agentes](/docs/agents).
+
+## Cache (economia de tokens e latência)
+
+- **Comece pelo `ExactCache`.** Para prompts que se repetem idênticos (FAQ,
+  reprocessamento, retries do usuário) ele zera o custo da 2ª chamada em diante.
+  Ajuste `max_size` e `ttl` ao seu tráfego.
+- **Use `SemanticCache` para paráfrases.** Quando perguntas têm o mesmo sentido
+  com palavras diferentes, ele compara por embeddings e acerta o cache. Precisa
+  de um LLM embedder e de um `threshold` (similaridade mínima): comece em ~`0.45`
+  e suba se vier resposta de cache "parecida demais" mas errada.
+- **Tenha um fallback de cache.** Se o provider de embeddings não suportar
+  embeddings (`UnsupportedError`) ou faltar chave, caia para `ExactCache` — é o
+  padrão do `escritor-ia`:
+
+  ```python
+  try:
+      cache = SemanticCache(embedder, threshold=0.45)
+  except UnsupportedError:
+      cache = ExactCache(max_size=512, ttl=3600)
+  llm = LLM(provider, model, cache=cache)
+  ```
+- Veja [Cache](/docs/cache).
+
+## Orquestração: escolha a abstração certa
+
+- **`Flow`** para um pipeline **linear** e previsível (limpar → estruturar →
+  resumir). Cada `step` vira variável `{{ }}` do próximo; um step pode ter
+  `schema=` para sair tipado. Custos somam automaticamente.
+- **`Graph`** quando há **roteamento condicional** (ex.: classificar e mandar
+  para o ramo técnico ou geral). Use quando o caminho depende do conteúdo.
+- **`Agent`/`Squad`** quando o próprio modelo deve **decidir** os passos e quando
+  chamar ferramentas. Não use agente para um pipeline fixo — `Flow` é mais barato
+  e determinístico.
+- Veja [Flows](/docs/flows) e [Agentes](/docs/agents).
+
+## Transcrição (áudio e vídeo)
+
+- **O Whisper aceita vídeo, mas tem teto de tamanho.** Os endpoints de STT
+  (OpenAI/Groq) transcrevem `mp4` direto — extraem a faixa de áudio sozinhos —,
+  porém há um limite de **~25 MB** por arquivo. Um vídeo de reunião estoura isso
+  com facilidade.
+- **Pré-processe a mídia no seu serviço, não na lib.** Antes de transcrever,
+  extraia só o áudio e normalize para algo leve (mono, 16 kHz, comprimido) com
+  `ffmpeg`. Isso cabe no limite, acelera o upload e padroniza o container.
+  Mantenha essa etapa no **seu backend**: a jangada é fina de propósito e não
+  embute dependências de sistema (como `ffmpeg`) — ela só repassa os bytes ao
+  provider via `Audio.from_bytes(dados, mime, name=...)`.
+- **Preserve a extensão no `name`.** O Whisper usa o nome do arquivo para inferir
+  o container; ao reprocessar, devolva algo como `reuniao.mp3`.
+- **Tenha um fallback.** Se o `ffmpeg` não estiver disponível (ou falhar num
+  codec exótico), mande o arquivo original — um `mp4` pequeno ainda transcreve.
+- Veja [Transcrição de áudio](/docs/audio).
+
+## Async e FastAPI
+
+- Use `acomplete`/`aparse`/`astream` em handlers async. Para o pipeline síncrono
+  (parsing de arquivos, chamadas em lote), rode em thread
+  (`anyio.to_thread.run_sync`) para não bloquear o event loop.
+- Em streaming, devolva um `StreamingResponse` consumindo o `astream`. Veja
+  [Streaming](/docs/streaming).
+
+<Callout type="warn">
+  Não exponha suas chaves no front-end. O navegador deve falar com o **seu**
+  backend; é o backend que detém as `api_key` dos providers.
+</Callout>
+
+## Pontos de atenção (como a lib se comporta)
+
+Não são armadilhas — são **contratos da lib**: alguns defaults a ajustar, outras
+formas canônicas de uso, e uma fronteira clara de responsabilidade. Tudo
+verificado no comportamento atual:
+
+| # | Ponto | Como lidar |
+|---|-------|------------|
+| 1 | **`max_tokens` default = 1024.** Trunca listas/extrações grandes. | Em structured output a lib levanta `errors.TruncatedError` ("aumente max_tokens") antes do erro confuso de JSON. Defina `max_tokens` folgado (ex.: 8192) — ver [Parâmetros](/docs/parameters). |
+| 2 | **`parse`/`aparse` retornam `Completion`**, não a instância Pydantic. | Leia sempre `resp.parsed` (ver [Structured output](/docs/structured-output)). |
+| 3 | **`images=` põe o texto primeiro e as imagens depois** (não intercala por padrão). | Para **rotular** cada imagem, passe tuplas: `images=[("frente", img1), ("verso", img2)]`. Para controle total, monte `history=[Message("user", [...])]` — ver [Mensagens e multimodal](/docs/vision#mensagens-e-multimodal-intercalado). |
+| 4 | **Templates `{{ }}`** só renderizam quando você passa kwargs de variável. | Sem kwargs, o prompt passa intacto. E `{ }` simples (JSON literal) **nunca** é tocado, mesmo com kwargs — JSON no prompt é seguro. |
+| 5 | **Params específicos do SDK** vão por `extra=` (construtor) ou `params=` (chamada). | Para o *thinking* do Gemini, passe `thinking_budget`/`thinking_level` e a lib adapta à versão — ver [Gemini](/docs/llm-gemini). Reserve `extra=` para params sem nome canônico nem perfil. |
+| 6 | **Fallback/retry não cobrem resposta malformada** (ex.: JSON inválido). Só erros de API (timeout, rate limit, 5xx). | `ValidationError` do Pydantic escapa do failover. Onde você faz parsing manual, mantenha um loop/validação próprios. |
+| 7 | **`detect_objects`/`adetect_objects` devolvem só `Detection`** (sem custo). | Use `detect_objects_full`/`adetect_objects_full`: devolvem um `DetectionResult` com `.detections` **e** `.completion`/`.cost`/`.usage` para fechar o acumulador por job. |
+
+<Callout type="info">
+  **Custo multimodal:** imagens já entram no custo como *input tokens* (os
+  providers contam assim) — nada a configurar além de ter o modelo na tabela de
+  preços. **Áudio** (transcrição Whisper/gpt-4o-transcribe) é cobrado **por
+  minuto**: o custo só aparece se a transcrição expuser a duração — passe
+  `response_format="verbose_json"` ou informe `Audio.from_bytes(..., duration=...)`.
+  Ver [Custo](/docs/cost).
+</Callout>

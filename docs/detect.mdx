@@ -1,0 +1,75 @@
+---
+title: "Detecção de objetos"
+description: "detectobjects() detecta objetos em uma imagem e devolve as caixas delimitadoras em pixels absolutos. É vision + structured output, então funciona em qualquer provider com visão..."
+---
+
+`detect_objects()` detecta objetos em uma imagem e devolve as **caixas
+delimitadoras em pixels absolutos**. É vision + structured output, então
+**funciona em qualquer provider com visão** — não é exclusivo do Gemini.
+
+```python
+from jangada_ai import LLM, detect_objects
+
+llm = LLM("gemini", "gemini-2.5-flash")
+dets = detect_objects(llm, "foto.png")
+
+for d in dets:
+    print(d.label, d.box)   # box = [x1, y1, x2, y2] em pixels
+```
+
+Cada `Detection` tem:
+
+- `label` — nome do objeto.
+- `box` — caixa em **pixels absolutos**, `[x1, y1, x2, y2]` (canto superior
+  esquerdo e inferior direito), já convertida ao tamanho real da imagem.
+- `box_2d` — caixa crua do modelo, `[ymin, xmin, ymax, xmax]` normalizada 0–1000.
+
+## Parâmetros
+
+```python
+detect_objects(
+    llm,
+    image,                      # caminho, ImagePart ou bytes via Image.from_bytes
+    target="todos os gatos",   # restringe o que procurar (opcional)
+    max_objects=10,             # limita a quantidade (opcional)
+    instructions="Ignore objetos desfocados; rotule em inglês.",  # ACRESCENTA ao prompt padrão
+    prompt=None,                # sobrescreve a instrução inteira (opcional)
+    image_size=(800, 600),      # informe se o formato não for detectável
+)
+```
+
+- `instructions` **soma** ao prompt padrão — útil para dar contexto da cena,
+  regras de rotulagem ou o que ignorar, sem perder o formato garantido.
+- `prompt` **substitui** a instrução inteira (o schema ainda garante a saída
+  JSON). Pode combinar os dois: `prompt=` define a base e `instructions=` agrega.
+
+Versão async: `await adetect_objects(llm, image, ...)`.
+
+## Funciona em todos os providers?
+
+**Sim, mecanicamente.** A convenção `box_2d [ymin,xmin,ymax,xmax]` em escala
+0–1000 é a do **Gemini** (instruída via prompt e validada por schema Pydantic),
+então:
+
+- **Gemini** — mais preciso (formato nativo de treino).
+- **OpenAI (gpt-4o, ...)** — funciona bem.
+- **Anthropic (Claude vision)** — detecta, mas a precisão das coordenadas varia.
+
+Use sempre um modelo com visão. Veja também [Vision](/docs/vision) e
+[Structured output](/docs/structured-output).
+
+## Robustez
+
+A leitura é **tolerante**: se o modelo localizar a chave (ex.: devolver `objetos`
+em vez de `objects`) ou cortar um `box_2d` (≠ 4 números), o `detect_objects`
+ainda extrai o que dá e **descarta as caixas inválidas** em vez de retornar vazio.
+
+## Dimensões da imagem
+
+As dimensões são lidas direto dos bytes (PNG, JPEG, GIF, BMP, WEBP) sem
+dependência externa. Para outros formatos, passe `image_size=(largura, altura)`.
+
+## Exemplo
+
+`examples/detect_example.py` — script executável.
+

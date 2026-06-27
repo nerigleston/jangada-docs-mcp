@@ -1,0 +1,103 @@
+---
+title: "Vision (images)"
+description: "Images come in as ImagePart (bytes + mime) and are translated to each SDK's native format. Always use a model with vision."
+---
+
+Images come in as `ImagePart` (bytes + mime) and are translated to each SDK's
+native format. Always use a model with vision.
+
+```python
+from jangada_ai import LLM, Image
+
+llm = LLM("openai", "gpt-4o-mini")
+
+# by path
+llm.complete("What's shown here?", images=["photo.jpg"])
+
+# by bytes or base64
+img = Image.from_bytes(upload_bytes, "image/png")   # or Image.from_base64
+receipt = llm.parse("Extract the total.", Receipt, images=[img]).parsed
+```
+
+## Translation per provider
+
+| Provider     | Native format                           |
+|--------------|-----------------------------------------|
+| OpenAI/Groq  | `image_url` with data URI               |
+| Anthropic    | `image` / `source` base64 block         |
+| Gemini       | `types.Part.from_bytes`                 |
+
+Only bytes circulate (use `Image.from_path/bytes/base64`). Combine with
+[Structured output](/en/docs/structured-output) by passing `images=` to `parse()`.
+
+## Label each image (shortcut)
+
+To **label** each image without building messages by hand, pass `(label, image)`
+tuples in `images=` — the library interleaves a `TextPart` with the label before
+each image, in the given order:
+
+```python
+llm.parse(
+    "Compare the documents.", Comparison,
+    images=[("front", Image.from_path("a_front.jpg")),
+            ("back",  Image.from_path("a_back.jpg"))],
+)
+```
+
+Unlabeled items (a plain `ImagePart`/path) keep working in the same list — mix
+labeled and plain freely.
+
+## Messages and interleaved multimodal
+
+The `images=[...]` shortcut puts the prompt text first and the images after. For
+**full control** of the order (alternating multiple text and image blocks,
+multi-turn), build the messages by hand with `Message`, `TextPart` and `ImagePart`
+(all importable from `jangada_ai`) and pass them via `history=`.
+
+```python
+from jangada_ai import LLM, Message, TextPart, Image
+
+llm = LLM("openai", "gpt-4o-mini")
+
+# text and images interleaved, each one labeled
+msg = Message("user", [
+    TextPart("Document A (front):"),
+    Image.from_path("a_front.jpg"),       # Image.* returns an ImagePart
+    TextPart("Document A (back):"),
+    Image.from_path("a_back.jpg"),
+    TextPart("Are both images from the same document? Compare them."),
+])
+
+resp = llm.complete(None, history=[msg])   # prompt=None: content comes from the messages
+print(resp.text)
+```
+
+`Message(role, content)` takes `role` in `"system" | "user" | "assistant" |
+"tool"` and `content` as a `str` **or** a list of parts (`TextPart` /
+`ImagePart`). For **multi-turn**, just accumulate the previous messages in
+`history`:
+
+```python
+resp1 = llm.complete("What's the capital of Brazil?")
+resp2 = llm.complete(
+    "And its population?",
+    history=[
+        Message("user", "What's the capital of Brazil?"),
+        Message("assistant", resp1.text),
+    ],
+)
+```
+
+`ImagePart` carries only bytes (`data` + `mime_type`), so it works the same
+across every provider; use the `Image.from_path/bytes/base64` factories instead
+of building the `ImagePart` by hand.
+
+## Vision vs. Documents
+
+For **docx/pdf/csv/xlsx**, prefer [Documents](/en/docs/documents): by default jangada
+extracts the text locally (cheaper, works on models without vision) and
+only uses vision when you force `mode="vision"` or when the PDF is scanned.
+
+## Example
+
+`examples/vision_example.py` — runnable script.

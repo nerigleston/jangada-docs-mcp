@@ -1,0 +1,76 @@
+---
+title: "Exemplo: Assistente de reuniões"
+description: "Recebe áudio/vídeo de uma reunião e devolve transcrição, ata estruturada (decisões e ações) via Flow e resumo executivo em streaming."
+---
+
+Recebe o **áudio (ou vídeo)** de uma reunião e devolve: a transcrição, uma **ata
+estruturada** (resumo, decisões, itens de ação com responsáveis) gerada por um
+`Flow`, e um resumo executivo em **streaming**. Junta transcrição + pipeline +
+structured output + streaming.
+
+**Pasta:** `pocs/reuniao-assistente` · **Porta sugerida:** `8003`
+
+## Recursos da jangada
+
+- `Audio.from_bytes()` + `llm.atranscribe()` — speech-to-text
+- `Flow` — pipeline sequencial (limpar transcrição → estruturar ata)
+- `aparse(..., schema=Ata)` num step do Flow — saída tipada
+- `llm.astream()` — resposta token a token
+
+## Núcleo do exemplo
+
+Pipeline `Flow` que limpa a transcrição e gera a ata tipada
+(`app/routers/reuniao.py`):
+
+```python
+from jangada_ai import Flow
+
+flow = (
+    Flow(llm)
+    .step("limpo", "Reescreva a transcrição corrigindo ruídos e organizando "
+                   "por falas, sem perder informação:\n{{transcricao}}")
+    .step("ata", "A partir da transcrição organizada, gere a ata da reunião.\n{{limpo}}",
+          schema=Ata)
+)
+r = flow.run(transcricao=transcricao)
+ata = coerce(r.completions["ata"], Ata)   # objeto Pydantic do step "ata"
+```
+
+Transcrição do upload (áudio ou vídeo):
+
+```python
+from jangada_ai import Audio
+
+audio = Audio.from_bytes(dados, mime, name=nome)   # preserve a extensão no name!
+comp = await stt.atranscribe(audio, language="pt")
+```
+
+Resumo em streaming:
+
+```python
+async def gerar():
+    async for token in llm.astream("Resuma esta reunião em tópicos:\n{{t}}", t=req.transcricao):
+        yield token
+return StreamingResponse(gerar(), media_type="text/plain; charset=utf-8")
+```
+
+## Pontos de atenção
+
+- O Whisper tem teto de **~25 MB** por arquivo. **Pré-processe a mídia no seu
+  backend** (extrair áudio, mono/16 kHz com `ffmpeg`) — a jangada é fina e não
+  embute `ffmpeg`, só repassa os bytes.
+- **Preserve a extensão no `name`** (`reuniao.mp3`): o Whisper infere o container
+  pelo nome.
+- Cada `step` do `Flow` vira variável `{{ }}` do próximo; o último sai tipado com
+  `schema=`.
+
+## Como rodar
+
+```bash
+cd pocs/reuniao-assistente
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8003   # http://localhost:8003/docs
+```
+
+Veja [Transcrição de áudio](/docs/audio), [Flows](/docs/flows) e
+[Streaming](/docs/streaming).

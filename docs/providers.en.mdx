@@ -1,0 +1,75 @@
+---
+title: "Providers and API keys"
+description: "jangada supports five providers (Anthropic, OpenAI, Groq, Gemini, OpenRouter), each isolated in an adapter that translates the normalized types (Message/Completion) to the native SDK."
+---
+
+jangada supports five providers, each isolated in an *adapter* that translates
+the normalized types (`Message`/`Completion`) to the native SDK.
+
+| Provider    | `provider=`  | Environment variable | Extra to install            |
+|-------------|--------------|----------------------|-----------------------------|
+| Anthropic   | `anthropic`  | `ANTHROPIC_API_KEY`  | `jangada-ai[anthropic]`     |
+| OpenAI      | `openai`     | `OPENAI_API_KEY`     | `jangada-ai[openai]`        |
+| Groq        | `groq`       | `GROQ_API_KEY`       | `jangada-ai[groq]`          |
+| Gemini      | `gemini`     | `GEMINI_API_KEY`     | `jangada-ai[gemini]`        |
+| OpenRouter  | `openrouter` | `OPENROUTER_API_KEY` | `jangada-ai[openai]`        |
+
+## OpenRouter (gateway to hundreds of models)
+
+[OpenRouter](https://openrouter.ai) is a *gateway* compatible with OpenAI's
+`chat.completions` dialect — so it reuses the **same `openai` SDK** (extra
+`jangada-ai[openai]`), just pointing to a different `base_url`. It gives access to
+hundreds of models from many providers with a single key. The model is
+**qualified by provider** (`provider/model`):
+
+```python
+LLM("openrouter", "openai/gpt-4o")                       # uses OPENROUTER_API_KEY
+LLM("openrouter", "anthropic/claude-sonnet-4.6")
+LLM("openrouter", "google/gemini-2.5-flash", api_key="sk-or-...")
+```
+
+OpenRouter-only arguments (e.g. `models` for routing with fallback) go via
+`extra=`; ranking headers via `default_headers=`:
+
+```python
+LLM(
+    "openrouter", "openai/gpt-4o",
+    default_headers={"HTTP-Referer": "https://mysite.com", "X-Title": "My App"},
+    extra={"models": ["openai/gpt-4o", "anthropic/claude-sonnet-4.6"]},
+)
+```
+
+It supports text, streaming, structured output (json_schema with automatic
+fallback to JSON Object mode), vision, tools/function calling, **audio
+transcription** (`openai/whisper-*`, `openai/gpt-4o-transcribe`) and **embeddings**
+(`openai/text-embedding-3-*`, `google/gemini-embedding-001`). The only unsupported
+feature is **server-side MCP** (it relies on the Responses API, which OpenRouter
+does not expose — raises `UnsupportedError`).
+
+## Key resolution
+
+```python
+LLM("openai", "gpt-4o-mini", api_key="sk-...")   # explicit
+LLM("openai", "gpt-4o-mini")                       # uses OPENAI_API_KEY or .env
+```
+
+Precedence: **explicit `api_key=` > environment variable > `.env` file**.
+The `.env` is detected non-destructively at import time (disable it with
+`JANGADA_NO_DOTENV=1`).
+
+## How each adapter handles structured output
+
+- **OpenAI**: `chat.completions.parse(response_format=Modelo)` → `.message.parsed`
+- **Groq**: `response_format={"type":"json_schema",...}` + `model_validate_json`
+- **Gemini**: `config.response_schema=Modelo` → `resp.parsed`
+- **Anthropic**: tool-forcing (`tool_choice` fixed) → validates `tool_use.input`
+- **OpenRouter**: same as Groq (json_schema with fallback to JSON Object mode)
+
+See [Structured output](/en/docs/structured-output) for the uniform usage.
+
+## Adding a new provider
+
+If it speaks OpenAI's `chat.completions` dialect, inherit from
+`_OpenAICompatible` and adjust `sdk_module`/`sync_class`/`async_class`. Otherwise,
+implement the 6 methods of the `Provider` contract. Details in
+[Extending](/en/docs/extending).

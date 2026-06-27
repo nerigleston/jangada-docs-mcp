@@ -1,0 +1,43 @@
+---
+title: "Code examples"
+description: "Complete (FastAPI) apps showing jangada in real scenarios: tool-using agents, vision + structured output, RAG, meeting transcription, cache and fallback."
+---
+
+Each example is a small, working **FastAPI** app focused on a real scenario.
+They are POCs meant for you to read the "core" of jangada usage and copy the
+pattern into your project — not just loose snippets.
+
+<Callout type="info">
+  Every example follows the same skeleton: `app/main.py` (FastAPI),
+  `app/routers/*` (endpoints), `app/core/*` (config, the `LLM` instance,
+  observability) and, when there's typed output, `app/schemas/*` (Pydantic
+  models). Provider keys come from `.env`.
+</Callout>
+
+## The examples
+
+| Example | What it shows | Key features |
+|---------|---------------|--------------|
+| [Personal assistant](/en/docs/example-assistente-pessoal) | An agent that decides which tools to use | `Agent`, prebuilt tools, observability |
+| [AI writer](/en/docs/example-escritor-ia) | Rewrite/translate/summarize with cache | `{{ }}` templates, `ExactCache`/`SemanticCache` |
+| [Fiscal Vision](/en/docs/example-fiscal-vision) | Reading invoices from a photo | `Image`, `parse` (structured output), `detect`, tools |
+| [Agent research](/en/docs/example-pesquisa-agentes) | Autonomous agents, teams and failover | `Agent`, `Squad`, `plan`, `with_fallback`, MCP |
+| [Meeting assistant](/en/docs/example-reuniao-assistente) | Audio → structured minutes → summary | `Audio`/transcription, `Flow`, streaming |
+| [Support with RAG](/en/docs/example-suporte-rag) | Support with a knowledge base | `RAG`, `Agent`, `ScopeGuard`, streaming |
+
+## How to run (standard)
+
+Every POC runs the same way — only the port changes:
+
+```bash
+cd pocs/<poc-name>
+pip install -r requirements.txt        # or use the workspace venv
+cp .env.example .env                   # fill in the provider keys
+uvicorn app.main:app --reload --port 8000
+# open http://localhost:8000/docs (interactive Swagger)
+```
+
+> The requirements usually bring `jangada-ai[all,rag,mcp]` to enable all
+> providers + documents + RAG + MCP. Install only the extras the example uses if
+> you want a leaner environment (see
+> [Installation](/en/docs/getting-started#installation)).

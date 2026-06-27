@@ -1,0 +1,72 @@
+---
+title: "Step-back prompting"
+description: "step_back() gera, a partir de uma pergunta específica, uma pergunta conceitualmente mais ampla, para recuperar contexto de fundo em RAG. Funciona em qualquer provider."
+---
+
+`step_back()` gera, a partir de uma pergunta específica, **uma pergunta
+conceitualmente mais ampla**. É uma técnica de transformação de query para RAG:
+a pergunta mais genérica recupera documentos de **contexto amplo** (princípios,
+categorias, fundamentos) que a busca pela pergunta original sozinha costuma
+perder. O padrão é buscar com **as duas** e juntar os trechos.
+
+```python
+from jangada_ai import LLM, step_back
+
+llm = LLM("openai", "gpt-4o-mini")
+ampla = step_back(llm, "Quais são as opções de tratamento para catarata?")
+print(ampla)
+# "Quais são as abordagens cirúrgicas e farmacológicas para o manejo da
+#  opacidade do cristalino?"
+```
+
+É só LLM + structured output, então **funciona em qualquer provider** — não
+depende de visão nem do extra `[rag]`.
+
+## Uso típico com RAG
+
+Busque o contexto com a pergunta original **e** com a step-back, e una os
+resultados antes de responder:
+
+```python
+from jangada_ai import LLM, step_back
+from jangada_ai.rag import RAG, vector_store
+
+llm = LLM("openai", "gpt-4o-mini")
+emb = LLM("openai", "text-embedding-3-small")
+rag = RAG(emb, vector_store("postgresql://..."), chat=llm)
+
+pergunta = "Quais são as opções de tratamento para catarata?"
+ampla = step_back(llm, pergunta)
+
+especificos = rag.search(pergunta)
+gerais = rag.search(ampla)
+# combine `especificos` + `gerais` (deduplique) e responda com o contexto unido.
+```
+
+## Parâmetros
+
+```python
+step_back(
+    llm,
+    query,                          # a pergunta específica
+    instructions="Foco em medicina; responda em pt-BR.",  # ACRESCENTA ao prompt padrão
+    prompt=None,                    # sobrescreve a instrução inteira (opcional)
+    params={"temperature": 0.2},   # params de geração (opcional)
+)
+```
+
+- `instructions` **soma** ao prompt padrão — útil para fixar domínio, idioma ou
+  o que enfatizar, sem perder o formato garantido pelo schema.
+- `prompt` **substitui** a instrução inteira (o schema ainda garante a saída).
+  Ao sobrescrever, inclua a pergunta no seu texto — o `{query}` só é interpolado
+  no prompt padrão.
+
+Versão async: `await astep_back(llm, query, ...)`.
+
+## Robustez
+
+A leitura é **tolerante**: usa o structured output quando vem válido, cai no
+texto cru se o modelo ignorar o schema e, em último caso, devolve a própria
+`query` — **nunca** retorna vazio.
+
+Veja também [RAG](/docs/rag) e [Structured output](/docs/structured-output).

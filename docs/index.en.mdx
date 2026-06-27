@@ -1,0 +1,35 @@
+---
+title: "Documentation"
+description: "Jangada AI — a thin, adaptable layer over LLM SDKs. Swap provider, model, or api_key without changing the rest of your code."
+---
+
+**Jangada AI** 🛶 is a thin layer over the official LLM SDKs
+(Anthropic, OpenAI, Groq, Gemini). The goal is to **swap provider/model/api_key
+without changing the rest of your code**, with `{{ }}` templates, chained flows,
+structured output (Pydantic), vision, audio, async, and error-based fallback.
+
+## Installation
+
+```bash
+pip install "jangada-ai[anthropic]"
+```
+
+## Where to start
+
+<Cards>
+  <Card title="Getting started" href="/en/docs/getting-started" description="Install, configure your key, and make your first call." />
+  <Card title="Providers and keys" href="/en/docs/providers" description="Anthropic, OpenAI, Groq, and Gemini with the same API." />
+  <Card title="Structured output" href="/en/docs/structured-output" description="Output validated with Pydantic on any provider." />
+  <Card title="Tools (function calling)" href="/en/docs/tools" description="The model calls your functions, provider-agnostic." />
+  <Card title="RAG" href="/en/docs/rag" description="Embeddings, vector store, and hybrid search." />
+  <Card title="Retry and fallback" href="/en/docs/retry-fallback" description="Defenses against API failures." />
+</Cards>
+
+## Sections
+
+- **Getting started** — getting-started, parameters, providers, capabilities.
+- **Providers** — Anthropic, OpenAI, Groq, Gemini.
+- **Capabilities** — structured output, tools, vision, audio, documents, detection, streaming, RAG, MCP, observability.
+- **Reliability** — errors, retry/fallback, cost, debug.
+- **Tutorials** — step by step from zero to fallback, structured extraction, RAG, and an MCP agent.
+- **Advanced** — extending (new provider) and flows.
