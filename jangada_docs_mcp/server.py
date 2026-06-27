@@ -72,11 +72,14 @@ def jangada_listar_docs() -> str:
     return "\n".join(linhas) or "nenhuma página encontrada"
 
 
-def jangada_ler_doc(nome: str, lang: str = "pt") -> str:
-    """Conteúdo completo de uma página. `nome` = arquivo (com ou sem .mdx),
-    ex.: 'rag', 'mcp', 'eval', 'agents', 'structured-output'. `lang`: 'pt' (padrão)
-    ou 'en'."""
-    nome = nome.strip().removesuffix(".mdx").removesuffix(".en")
+def jangada_ler_doc(nome: str = "", lang: str = "pt", slug: str = "") -> str:
+    """Conteúdo completo de uma página. `nome` (alias: `slug`) = arquivo (com ou
+    sem .mdx), ex.: 'rag', 'mcp', 'eval', 'agents', 'structured-output'. `lang`:
+    'pt' (padrão) ou 'en'. Veja os nomes em jangada_listar_docs()."""
+    nome = (nome or slug).strip().removesuffix(".mdx").removesuffix(".en")
+    if not nome:
+        disponiveis = ", ".join(p.stem for p in _pt_pages())
+        return f"informe 'nome' (ex.: 'rag'). Disponíveis: {disponiveis}"
     arquivo = DOCS / (f"{nome}.en.mdx" if lang == "en" else f"{nome}.mdx")
     if not arquivo.exists():
         disponiveis = ", ".join(p.stem for p in _pt_pages())
@@ -84,14 +87,14 @@ def jangada_ler_doc(nome: str, lang: str = "pt") -> str:
     return arquivo.read_text(encoding="utf-8", errors="ignore")
 
 
-def jangada_buscar(termo: str, max_resultados: int = 30) -> str:
-    """Procura por palavra(s)-chave na documentação PT (case-insensitive). Com
-    várias palavras, a página precisa conter TODAS (em qualquer linha) — então
-    frases como 'structured output aparse' funcionam. Devolve as linhas que casam
-    qualquer palavra, agrupadas por página."""
-    tokens = [t for t in termo.lower().split() if t]
+def jangada_buscar(termo: str = "", max_resultados: int = 30, query: str = "") -> str:
+    """Procura por palavra(s)-chave na documentação PT (case-insensitive). `termo`
+    (alias: `query`). Com várias palavras, a página precisa conter TODAS — então
+    'structured output aparse' funciona. Devolve as linhas que casam qualquer
+    palavra, por página. Se vier truncado, abra a página com jangada_ler_doc."""
+    tokens = [t for t in (termo or query).lower().split() if t]
     if not tokens:
-        return "informe um termo de busca"
+        return "informe um termo de busca (ex.: 'reranker' ou 'structured output')"
     saida: list[str] = []
     achados = 0
     for f in _pt_pages():
