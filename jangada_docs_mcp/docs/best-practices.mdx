@@ -29,9 +29,12 @@ item aponta para o guia detalhado da capacidade correspondente.
 
 - **Valide sempre contra o schema.** Use `parse()`/`aparse()` com um modelo
   Pydantic; não confie em parsing manual de texto.
-- **Tenha um fallback de coerção.** Em alguns SDKs `completion.parsed` pode vir
-  `None` mesmo com JSON válido em `completion.text`. Caia para
-  `Model.model_validate_json(completion.text)` nesse caso.
+- **`comp.parsed` é confiável** — a jangada coage automaticamente: se um SDK
+  devolver `parsed=None` com JSON válido em `.text`, a lib valida o texto pelo
+  schema (sem `model_validate_json` manual).
+- **JSON fora do schema entra no failover** — vira `errors.OutputValidationError`
+  e tenta o próximo modelo do `with_fallback` (sem repetir o mesmo). O fallback
+  cobre erro de API **e** saída malformada.
 - Campos opcionais com `default=None` evitam que o modelo invente valores quando
   o dado não existe. Veja [Structured output](/docs/structured-output).
 

@@ -29,6 +29,7 @@ All inherit from `errors.LLMError`. The main categories:
 | `ConnectionError`    | connection failure                 | yes              |
 | `ServerError`        | 5xx                                | yes              |
 | `NotFoundError`      | 404 (model/endpoint)               | yes (no retry)  |
+| `OutputValidationError` | `parse()` with off-schema JSON  | yes (no retry)  |
 | `AuthError`          | 401/403                            | **no**           |
 | `BadRequestError`    | 400 (invalid params)               | **no**           |
 
@@ -36,7 +37,8 @@ All inherit from `errors.LLMError`. The main categories:
 
 - `errors.TRANSIENT` — what triggers **retry with backoff** (rate limit, timeout,
   connection, 5xx).
-- `errors.DEFAULT_FAILOVER` — what triggers **fallback** (the transient ones + 404).
+- `errors.DEFAULT_FAILOVER` — what triggers **fallback** (the transient ones + 404 +
+  `OutputValidationError`).
   Does not include `auth` or `bad_request` by default.
 
 You can customize `retry_on=` and `backoff_on=` per `LLM` — see

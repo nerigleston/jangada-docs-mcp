@@ -169,6 +169,10 @@ serve_mcp("my-calc", tools=[add], transport="streamable-http", port=8000)
 Extra `jangada-ai[mcp]` (HTTP also needs `starlette` + `uvicorn`).
 `serve_mcp`/`build_mcp_app` = **server**; `MCPClient` = **client**.
 
+**Ready-made example:** [`jangada-docs-mcp`](https://github.com/nerigleston/jangada-docs-mcp)
+serves all of jangada's docs to your editor (Claude Code/Desktop/Cursor) — no
+clone: `uvx --from git+https://github.com/nerigleston/jangada-docs-mcp jangada-docs-mcp`.
+
 ## Example
 
 - `examples/mcp_example.py` — MCP client.

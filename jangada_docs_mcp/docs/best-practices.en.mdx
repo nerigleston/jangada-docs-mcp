@@ -28,9 +28,12 @@ links to the detailed guide for the corresponding capability.
 
 - **Always validate against the schema.** Use `parse()`/`aparse()` with a Pydantic
   model; don't rely on manual text parsing.
-- **Keep a coercion fallback.** In some SDKs `completion.parsed` may be `None`
-  even with valid JSON in `completion.text`. Fall back to
-  `Model.model_validate_json(completion.text)` in that case.
+- **`comp.parsed` is reliable** — jangada coerces automatically: if some SDK
+  returns `parsed=None` with valid JSON in `.text`, the lib validates the text
+  against the schema (no manual `model_validate_json`).
+- **Off-schema JSON triggers failover** — it becomes `errors.OutputValidationError`
+  and tries the next model in `with_fallback` (without retrying the same one).
+  Fallback covers API errors **and** malformed output.
 - Optional fields with `default=None` keep the model from inventing values when
   the data is missing. See [Structured output](/docs/structured-output).
 

@@ -19,9 +19,15 @@ comp = llm.parse("Extract: João is 30 years old.", Person)
 print(comp.parsed.name, comp.parsed.age)   # João 30
 ```
 
-- `comp.parsed` → the Pydantic instance.
+- `comp.parsed` → the Pydantic instance. **Reliable**: if some SDK returns
+  `parsed=None` with valid JSON in `.text`, jangada validates the text against the
+  schema automatically (no manual `model_validate_json` needed).
 - `comp.text` → the raw JSON returned.
 - `comp.usage` / `comp.cost` → tokens and estimated cost.
+
+> 🔁 **JSON off-schema → failover.** Output that doesn't match the model raises
+> `errors.OutputValidationError` and tries the **next model** in `with_fallback`
+> (it won't retry the same one). Fallback covers API errors **and** malformed output.
 
 <Callout type="warn">
   Remember that `max_tokens` defaults to **1024**. Extracting **large lists**
