@@ -1,2 +1,2 @@
 # Servidor MCP de docs do jangada. Só precisa do SDK MCP (via jangada-ai[mcp]).
-jangada-ai[mcp]>=0.34.0
+jangada-ai[mcp]>=0.35.0
