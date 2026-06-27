@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "jangada-docs-mcp"
+version = "0.1.0"
+description = "Servidor MCP com toda a documentação da lib jangada (jangada-ai) — para o assistente codar com a API correta"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "Neri", email = "neri@lizardti.com" }]
+keywords = ["mcp", "jangada", "jangada-ai", "llm", "docs", "claude", "cursor"]
+dependencies = ["jangada-ai[mcp]>=0.34.0"]
+
+[project.urls]
+Homepage = "https://github.com/nerigleston/jangada-docs-mcp"
+Library = "https://github.com/nerigleston/jangada"
+
+[project.scripts]
+jangada-docs-mcp = "jangada_docs_mcp.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["jangada_docs_mcp"]
+# os .mdx (a documentação) ficam dentro do pacote → já entram no wheel (self-contained)
