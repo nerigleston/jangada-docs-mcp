@@ -85,17 +85,24 @@ def jangada_ler_doc(nome: str, lang: str = "pt") -> str:
 
 
 def jangada_buscar(termo: str, max_resultados: int = 30) -> str:
-    """Procura um termo (case-insensitive) em toda a documentação PT e devolve as
-    linhas que casam, agrupadas por página. Útil para achar 'como faço X'."""
-    termo_l = termo.lower()
+    """Procura por palavra(s)-chave na documentação PT (case-insensitive). Com
+    várias palavras, a página precisa conter TODAS (em qualquer linha) — então
+    frases como 'structured output aparse' funcionam. Devolve as linhas que casam
+    qualquer palavra, agrupadas por página."""
+    tokens = [t for t in termo.lower().split() if t]
+    if not tokens:
+        return "informe um termo de busca"
     saida: list[str] = []
     achados = 0
     for f in _pt_pages():
         try:
-            linhas = f.read_text(encoding="utf-8", errors="ignore").splitlines()
+            texto = f.read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
-        hits = [ln.strip() for ln in linhas if termo_l in ln.lower()]
+        low = texto.lower()
+        if not all(t in low for t in tokens):  # página precisa ter todas as palavras
+            continue
+        hits = [ln.strip() for ln in texto.splitlines() if any(t in ln.lower() for t in tokens)]
         if hits:
             saida.append(f"## {f.stem}")
             for h in hits[:8]:
@@ -104,7 +111,9 @@ def jangada_buscar(termo: str, max_resultados: int = 30) -> str:
                 if achados >= max_resultados:
                     saida.append("… (truncado; refine o termo ou abra a página)")
                     return "\n".join(saida)
-    return "\n".join(saida) or f"nenhum resultado para '{termo}'"
+    return "\n".join(saida) or (
+        f"nenhum resultado para '{termo}' (tente menos palavras ou palavras-chave isoladas)"
+    )
 
 
 def main() -> None:
