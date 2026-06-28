@@ -3,7 +3,7 @@ title: "Providers e chaves de API"
 description: "A jangada suporta cinco providers (Anthropic, OpenAI, Groq, Gemini, OpenRouter), cada um isolado em um adapter que traduz os tipos normalizados (Message/Completion) para o SDK nativo."
 ---
 
-A jangada suporta cinco providers, cada um isolado em um *adapter* que traduz
+A jangada suporta vários providers, cada um isolado em um *adapter* que traduz
 os tipos normalizados (`Message`/`Completion`) para o SDK nativo.
 
 | Provider    | `provider=`  | Variável de ambiente | Extra para instalar         |
@@ -13,6 +13,14 @@ os tipos normalizados (`Message`/`Completion`) para o SDK nativo.
 | Groq        | `groq`       | `GROQ_API_KEY`       | `jangada-ai[groq]`          |
 | Gemini      | `gemini`     | `GEMINI_API_KEY`     | `jangada-ai[gemini]`        |
 | OpenRouter  | `openrouter` | `OPENROUTER_API_KEY` | `jangada-ai[openai]`        |
+| AWS Bedrock | `bedrock`    | credenciais AWS (`AWS_ACCESS_KEY_ID`…) | `jangada-ai[bedrock]`  |
+| Azure OpenAI| `azure`      | `AZURE_OPENAI_API_KEY` + `AZURE_OPENAI_ENDPOINT` | `jangada-ai[openai]` |
+| Vertex AI   | `vertex`     | `GOOGLE_CLOUD_PROJECT` + ADC | `jangada-ai[gemini]`      |
+
+Os três últimos são **gateways de nuvem** (AWS, Azure, Google Cloud): mesmos
+modelos, hospedados na sua conta da nuvem, com IAM/billing/residência de dados do
+provedor. Veja [AWS Bedrock](/docs/llm-bedrock), [Azure OpenAI](/docs/llm-azure)
+e [Vertex AI](/docs/llm-vertex).
 
 ## OpenRouter (gateway para centenas de modelos)
 

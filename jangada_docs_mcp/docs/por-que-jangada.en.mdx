@@ -1,0 +1,74 @@
+---
+title: "Why Jangada"
+description: "An honest comparison of jangada with LiteLLM, LangChain and instructor — what each does best and when to pick each. Jangada is a thin PT-BR layer with native observability, not an orchestration framework."
+---
+
+Jangada doesn't try to be everything. It's a **thin layer over the official LLM
+SDKs**, with native observability in 1 line in your `.env`. This page is honest:
+it shows **when another tool is the right choice** and where jangada shines.
+
+<Callout type="info">
+  **Philosophy.** Outside the adapters only two normalized types flow —
+  `Message` and `Completion`. No `Runnable`/LCEL, no implicit graph: you call
+  methods (`complete`, `parse`, `stream`) and compose with plain Python. Less
+  abstraction between you and the call.
+</Callout>
+
+## Overview
+
+| | jangada | LiteLLM | LangChain | instructor |
+|---|---|---|---|---|
+| Focus | Thin layer + observability | Multi-provider proxy/routing | Orchestration framework | Structured output |
+| Provider swap | `LLM("provider", "model")` | `completion(model="provider/model")` | class per provider / `init_chat_model` | inherits the client you pass |
+| Structured output | native (`parse` → Pydantic) | via `response_format` | `with_structured_output` | it's its core |
+| Orchestration (agents/flows) | `Agent`/`Squad`/`Flow`/`Graph` | no | extensive (langgraph) | no |
+| Built-in RAG | yes (`RAG` + vector store) | no | yes (many loaders/retrievers) | no |
+| Observability | **native, 1 line in `.env`** | callbacks/logging | LangSmith (external) | no |
+| Language/docs | **PT-BR** | EN | EN | EN |
+
+## When to pick each
+
+### Use **LiteLLM** when…
+
+…you need a central **proxy/gateway** (server) routing many providers, with
+budgets, rate limiting and virtual keys per team — an infrastructure layer
+between your apps and the providers. LiteLLM covers **hundreds** of providers.
+Jangada is an **in-process library** (not a proxy) and supports a focused set of
+providers with normalized types and high-level capabilities (tools, RAG, agents)
+— not just forwarding the call.
+
+### Use **LangChain** when…
+
+…your problem is **heavy orchestration**: complex graphs, lots of ready-made
+integrations/loaders, the langgraph ecosystem. Jangada has `Flow`/`Graph` and
+`Agent`/`Squad`, but with **far less abstraction** — if you want LCEL,
+`Runnable` and a huge catalog of integrations, LangChain delivers that. If you
+find LangChain too abstract and want to stay close to the call, jangada is more
+direct. Coming from there? See
+[LangChain migration](/en/docs/migration-langchain).
+
+### Use **instructor** when…
+
+…you want **only** structured output on top of a client you already have,
+nothing else. It's lightweight and great at it. Jangada does native structured
+output (`parse` → Pydantic, uniform across providers) **and** brings the rest
+(vision, audio, documents, tools, RAG, MCP, retry/fallback, cost, observability)
+in the same API. If you only need the validated JSON, instructor is enough; if
+you want the whole package, jangada.
+
+## Where jangada shines
+
+- **Swap provider/model/api_key in one line** without touching the rest of your
+  code.
+- **Native observability**: 2 variables in your `.env` and every call is sent on
+  its own — no code instrumentation. See
+  [Observability](/en/docs/observability).
+- **PT-BR end to end**: docs, examples and error messages.
+- **Normalized capabilities**: each SDK's complexity stays isolated in an
+  adapter; outside it only normalized types flow.
+- Full **sync/async parity** and **cost in the response** (`Completion.cost`).
+
+In short: jangada doesn't compete with LiteLLM as a *gateway* nor with LangChain
+as a graph framework — it's the **thin, predictable layer** between your code and
+the SDKs, with observability built in. See [Use cases](/en/docs/casos-de-uso) to
+see it in practice.

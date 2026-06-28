@@ -1,0 +1,109 @@
+---
+title: "Casos de uso"
+description: "Três casos reais do problema ao código com a jangada: extração estruturada de documento (visão fiscal), fallback por erro entre providers e RAG de suporte. Cada um em poucas linhas, sem boilerplate."
+---
+
+Esta página mostra, **do problema ao código**, três situações comuns resolvidas
+com a jangada. A ideia é menos teoria e mais "cole, troque a chave e rode". Cada
+caso aponta para a página da capacidade correspondente.
+
+## 1. Extração estruturada de documento (visão fiscal)
+
+**Problema.** Você recebe notas fiscais em PDF/imagem e precisa dos campos
+(fornecedor, total, itens) tipados e validados — não um texto solto que depois
+você faz regex.
+
+**Solução.** Defina um schema Pydantic e use `parse(...)` com `files=`. A jangada
+manda o documento para o provider, recebe a resposta já validada no seu modelo.
+
+```python
+from pydantic import BaseModel
+from jangada_ai import LLM
+
+class Item(BaseModel):
+    descricao: str
+    valor: float
+
+class NotaFiscal(BaseModel):
+    fornecedor: str
+    cnpj: str
+    total: float
+    itens: list[Item]
+
+llm = LLM("openai", "gpt-4o")
+resp = llm.parse(
+    "Extraia os dados desta nota fiscal.",
+    schema=NotaFiscal,
+    files=["nota.pdf"],   # pdf, imagem, docx, csv, xlsx…
+)
+nota = resp.parsed        # objeto NotaFiscal já validado
+print(nota.fornecedor, nota.total, len(nota.itens))
+```
+
+Funciona igual trocando para `LLM("gemini", "gemini-2.5-flash")` ou
+`LLM("anthropic", "claude-sonnet-4-5")`. Veja
+[Structured output](/docs/structured-output), [Vision](/docs/vision) e
+[Documentos](/docs/documents).
+
+## 2. Fallback por erro entre providers
+
+**Problema.** O provider primário tem rate limit, timeout ou cai (5xx). Você não
+quer que a aplicação caia junto nem reescrever a chamada.
+
+**Solução.** Encadeie uma lista de fallback. Quando o erro é recuperável, a
+jangada tenta o próximo provider **sem mudar o resto do código**.
+
+```python
+from jangada_ai import LLM
+
+llm = LLM("anthropic", "claude-sonnet-4-5").with_fallback(
+    LLM("openai", "gpt-5"),
+    LLM("groq",   "llama-4-scout"),
+)
+
+# falhou no primário? failover automático
+resp = llm.complete("Explique jangadas em uma frase.")
+print(resp.text)
+```
+
+A cadeia respeita a classificação de erro normalizada (rate limit, timeout, 5xx,
+404…). Veja [Erros](/docs/errors) e [Retry e fallback](/docs/retry-fallback).
+
+## 3. RAG de suporte (buscar antes de responder)
+
+**Problema.** O modelo precisa responder com base na **sua** base de
+conhecimento (docs, tickets), não no que ele "lembra".
+
+**Solução.** Indexe os documentos uma vez (chunk + embed + vector store) e, a
+cada pergunta, recupere os trechos relevantes e injete no prompt.
+
+```python
+from jangada_ai import LLM, RAG
+
+rag = RAG(
+    embedder=LLM("openai", "text-embedding-3-small"),
+    store="postgresql://localhost/jangada",   # pgvector
+)
+
+# 1) indexar (uma vez)
+rag.add(files=["manual.pdf", "faq.md"])
+
+# 2) responder usando o contexto recuperado
+contexto = rag.search("Como faço para emitir a segunda via?", k=4)
+llm = LLM("anthropic", "claude-sonnet-4-5")
+resp = llm.complete(
+    "Responda usando só o contexto:\n{{ contexto }}\n\nPergunta: {{ q }}",
+    contexto="\n\n".join(contexto),
+    q="Como faço para emitir a segunda via?",
+)
+print(resp.text)
+```
+
+Veja [RAG](/docs/rag) e [Step-back prompting](/docs/stepback) para recuperar
+contexto de fundo.
+
+## Próximos passos
+
+- Tutorial completo de [extração estruturada](/docs/tutorial-extracao-estruturada).
+- Tutorial de [RAG](/docs/tutorial-rag) ponta a ponta.
+- [Por que Jangada](/docs/por-que-jangada) — comparação honesta com outras libs.

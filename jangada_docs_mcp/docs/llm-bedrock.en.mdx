@@ -1,0 +1,63 @@
+---
+title: "AWS Bedrock"
+description: "Provider bedrock. Access models hosted on Amazon Bedrock (Claude, Llama, Titan, Mistral…) through jangada's normalized API, authenticating with your AWS credentials."
+---
+
+Provider `bedrock`. Adapter over **Amazon Bedrock**, AWS's managed service that
+serves models from several vendors (Anthropic Claude, Meta Llama, Amazon
+Titan/Nova, Mistral, Cohere…) behind a single API and **one bill** (AWS's). You
+talk to all of them through the same `LLM(...)`.
+
+```bash
+pip install "jangada-ai[bedrock]"
+```
+
+- **`provider=`**: `"bedrock"`
+- **Authentication**: standard AWS credentials — `AWS_ACCESS_KEY_ID`,
+  `AWS_SECRET_ACCESS_KEY` and `AWS_REGION` (or `AWS_DEFAULT_REGION`). Profiles
+  (`AWS_PROFILE`), IAM roles and EC2/Lambda metadata also work — the same
+  resolution chain as `boto3`.
+- **Model**: the Bedrock **model ID** (or *inference profile*), e.g.
+  `anthropic.claude-3-5-sonnet-20241022-v2:0`.
+
+```python
+from jangada_ai import LLM
+
+# uses AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_REGION from the env
+llm = LLM("bedrock", "anthropic.claude-3-5-sonnet-20241022-v2:0")
+resp = llm.complete("Summarize {{ topic }} in one sentence.", topic="rafts")
+print(resp.text, resp.cost)
+```
+
+## Configuration via environment
+
+In your `.env` (or process variables):
+
+```bash
+AWS_ACCESS_KEY_ID=AKIA...
+AWS_SECRET_ACCESS_KEY=...
+AWS_REGION=us-east-1
+```
+
+Region matters: each model ID only exists in some regions, and *inference
+profiles* (e.g. `us.anthropic.claude-3-5-sonnet-...`) enable cross-region
+routing. `boto3`-specific arguments (e.g. `endpoint_url`, `region_name`) go
+through `extra=`.
+
+## What it does
+
+- **Text** and **streaming** via Bedrock's **Converse API** (a unified
+  interface across all models).
+- **Structured output** (`parse`): tool-forcing when the model supports tools;
+  otherwise a JSON instruction + validation with `model_validate_json`.
+- **Vision** (`images=`): on vision-capable models (Claude family, Llama
+  vision, Nova).
+- **Documents** (`files=`): local text extraction before sending.
+
+## When to choose Bedrock
+
+When your stack already lives on AWS and you want **unified governance, billing
+and network isolation (VPC)**, without spreading each vendor's API keys. Combine
+it as a **fallback** for direct Claude (Anthropic) to get cross-cloud
+redundancy. See [Providers](/en/docs/providers) and
+[Retry and fallback](/en/docs/retry-fallback).

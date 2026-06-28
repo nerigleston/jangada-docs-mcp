@@ -1,0 +1,64 @@
+---
+title: "Azure OpenAI"
+description: "Provider azure. The same OpenAI models (GPT-4o, GPT-4.1, o-series…) served by Azure OpenAI Service, through jangada's normalized API, authenticating with your Azure resource endpoint + key."
+---
+
+Provider `azure`. Adapter over **Azure OpenAI Service** — the same OpenAI models
+(GPT-4o, GPT-4.1, o-series, embeddings…), but hosted on Azure, with Microsoft's
+SLA, data residency and network isolation. Since the dialect is OpenAI's
+`chat.completions`, it inherits from `_OpenAICompatible`; only the
+authentication and the fact that the "model" is the **deployment name** change.
+
+```bash
+pip install "jangada-ai[openai]"
+```
+
+- **`provider=`**: `"azure"`
+- **Environment variables**: `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`
+  (e.g. `https://my-resource.openai.azure.com`) and `AZURE_OPENAI_API_VERSION`
+  (e.g. `2024-10-21`).
+- **Model**: the **deployment name** you created in the Azure portal (not the
+  raw model name). E.g. a deployment called `gpt-4o`.
+
+```python
+from jangada_ai import LLM
+
+# uses AZURE_OPENAI_API_KEY / AZURE_OPENAI_ENDPOINT / AZURE_OPENAI_API_VERSION
+llm = LLM("azure", "gpt-4o")   # "gpt-4o" = your deployment name
+resp = llm.complete("Summarize {{ topic }} in one sentence.", topic="rafts")
+print(resp.text, resp.cost)
+```
+
+## Configuration via environment
+
+```bash
+AZURE_OPENAI_API_KEY=...
+AZURE_OPENAI_ENDPOINT=https://my-resource.openai.azure.com
+AZURE_OPENAI_API_VERSION=2024-10-21
+```
+
+The endpoint and `api_version` can be passed explicitly in the constructor (via
+`extra=`) when you need to point at another resource without touching the
+environment.
+
+## What it does
+
+Everything the `openai` provider does, since they share the
+`_OpenAICompatible` base:
+
+- **Text**, **streaming** and **structured output** (`parse`) with
+  `chat.completions.parse`.
+- **Vision** (`images=`) and **documents** (`files=`).
+- **Audio transcription** and **embeddings** when you have matching deployments
+  (e.g. `whisper`, `text-embedding-3-large`).
+
+> Note: each capability depends on a **deployment** of that model existing in
+> your Azure resource. Without an embeddings deployment, there is no `embed`.
+
+## When to choose Azure OpenAI
+
+When the company is already on Azure and needs **compliance, data residency and
+a corporate contract** with Microsoft, while keeping OpenAI's models. The code
+is identical to direct OpenAI — swap `LLM("openai", ...)` for
+`LLM("azure", ...)`. See [OpenAI](/en/docs/llm-openai) and
+[Providers](/en/docs/providers).

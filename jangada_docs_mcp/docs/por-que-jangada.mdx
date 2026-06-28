@@ -1,0 +1,71 @@
+---
+title: "Por que Jangada"
+description: "Comparação honesta da jangada com LiteLLM, LangChain e instructor — o que cada uma faz melhor e quando escolher cada uma. A jangada é uma camada fina PT-BR com observability nativa, não um framework de orquestração."
+---
+
+A jangada não tenta ser tudo. Ela é uma **camada fina sobre os SDKs oficiais de
+LLM**, em PT-BR, com observability nativa em 1 linha no `.env`. Esta página é
+honesta: mostra **quando outra ferramenta é a escolha certa** e onde a jangada
+brilha.
+
+<Callout type="info">
+  **Filosofia.** Fora dos adapters só circulam dois tipos normalizados —
+  `Message` e `Completion`. Sem `Runnable`/LCEL, sem grafo implícito: você chama
+  métodos (`complete`, `parse`, `stream`) e compõe com Python comum. Menos
+  abstração entre você e a chamada.
+</Callout>
+
+## Visão geral
+
+| | jangada | LiteLLM | LangChain | instructor |
+|---|---|---|---|---|
+| Foco | Camada fina + observability | Proxy/roteamento multi-provider | Framework de orquestração | Structured output |
+| Troca de provider | `LLM("provider", "model")` | `completion(model="provider/model")` | classe por provider / `init_chat_model` | herda do client que você passa |
+| Structured output | nativo (`parse` → Pydantic) | via `response_format` | `with_structured_output` | é o core dele |
+| Orquestração (agents/flows) | `Agent`/`Squad`/`Flow`/`Graph` | não | extenso (langgraph) | não |
+| RAG embutido | sim (`RAG` + vector store) | não | sim (muitos loaders/retrievers) | não |
+| Observability | **nativa, 1 linha no `.env`** | callbacks/logging | LangSmith (externo) | não |
+| Idioma/docs | **PT-BR** | EN | EN | EN |
+
+## Quando escolher cada uma
+
+### Use **LiteLLM** quando…
+
+…você precisa de um **proxy/gateway** central (servidor) roteando muitos
+provedores, com *budget*, *rate limiting* e chave virtual por time — uma camada
+de infraestrutura entre suas apps e os provedores. A LiteLLM cobre **centenas**
+de provedores. A jangada é uma **biblioteca in-process** (não um proxy) e suporta
+um conjunto focado de providers com tipos normalizados e capacidades de alto
+nível (tools, RAG, agents) — não só o repasse da chamada.
+
+### Use **LangChain** quando…
+
+…seu problema é de **orquestração pesada**: grafos complexos, muitos
+integrations/loaders prontos, ecossistema langgraph. A jangada tem `Flow`/`Graph`
+e `Agent`/`Squad`, mas com **muito menos abstração** — se você quer LCEL,
+`Runnable` e um catálogo enorme de integrações, LangChain entrega isso. Se você
+acha o LangChain abstrato demais e quer ficar perto da chamada, a jangada é mais
+direta. Vindo de lá? Veja [Migração do LangChain](/docs/migration-langchain).
+
+### Use **instructor** quando…
+
+…você quer **só** structured output em cima de um client que você já tem, sem
+mais nada. É leve e ótimo nisso. A jangada faz structured output nativo (`parse`
+→ Pydantic, uniforme entre providers) **e** traz o resto (vision, áudio,
+documentos, tools, RAG, MCP, retry/fallback, custo, observability) na mesma API.
+Se você só precisa do JSON validado, instructor basta; se quer o pacote, jangada.
+
+## Onde a jangada brilha
+
+- **Troca de provider/model/api_key numa linha** sem mexer no resto do código.
+- **Observability nativa**: 2 variáveis no `.env` e cada chamada é enviada
+  sozinha — sem instrumentar código. Veja [Observability](/docs/observability).
+- **PT-BR de ponta a ponta**: docs, exemplos e mensagens de erro.
+- **Capacidades normalizadas**: a complexidade de cada SDK fica isolada num
+  adapter; fora dele só circulam tipos normalizados.
+- **Paridade sync/async** total e **custo na resposta** (`Completion.cost`).
+
+Em resumo: a jangada não compete com a LiteLLM como *gateway* nem com o LangChain
+como framework de grafos — ela é a **camada fina e previsível** entre o seu
+código e os SDKs, com observability embutida. Veja
+[Casos de uso](/docs/casos-de-uso) para ver na prática.

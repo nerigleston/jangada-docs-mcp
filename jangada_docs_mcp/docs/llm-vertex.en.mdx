@@ -1,0 +1,60 @@
+---
+title: "Vertex AI"
+description: "Provider vertex. The Gemini models served by Google Cloud Vertex AI, through jangada's normalized API, authenticating with your project/region + Application Default Credentials."
+---
+
+Provider `vertex`. Adapter over Google Cloud's **Vertex AI** — the same
+**Gemini** models (and partners, like Claude on Vertex), but inside your GCP
+project, with Google Cloud's IAM, billing and data residency. It reuses the
+`google-genai` SDK in Vertex mode; only the authentication changes (project +
+region, no `GEMINI_API_KEY`).
+
+```bash
+pip install "jangada-ai[gemini]"
+```
+
+- **`provider=`**: `"vertex"`
+- **Environment variables**: `GOOGLE_CLOUD_PROJECT` (project ID),
+  `GOOGLE_CLOUD_LOCATION` (e.g. `us-central1`) and
+  `GOOGLE_APPLICATION_CREDENTIALS` pointing to the *service account* JSON (or ADC
+  already set up via `gcloud auth application-default login`).
+- **Model**: the Gemini model name, e.g. `gemini-2.5-flash`, `gemini-2.5-pro`.
+
+```python
+from jangada_ai import LLM
+
+# uses GOOGLE_CLOUD_PROJECT / GOOGLE_CLOUD_LOCATION / ADC from the env
+llm = LLM("vertex", "gemini-2.5-flash")
+resp = llm.complete("Summarize {{ topic }} in one sentence.", topic="rafts")
+print(resp.text, resp.cost)
+```
+
+## Configuration via environment
+
+```bash
+GOOGLE_CLOUD_PROJECT=my-project-123
+GOOGLE_CLOUD_LOCATION=us-central1
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
+```
+
+`project` and `location` can be passed explicitly in the constructor (via
+`extra=`) when you need another project/region without touching the environment.
+Authentication uses **Application Default Credentials** — there is no API key
+like with direct Gemini.
+
+## What it does
+
+Everything the `gemini` provider does, since they share the `google-genai` SDK:
+
+- **Text**, **streaming** and **structured output** (`parse`) with
+  `config.response_schema`.
+- **Vision** (`images=`), **documents** (`files=`) and **audio**.
+- **Embeddings** (e.g. `gemini-embedding-001`) for RAG.
+
+## When to choose Vertex AI
+
+When the team is already on Google Cloud and needs Gemini models under **GCP's
+IAM, billing and governance** (and per-region data residency), instead of the
+direct Gemini API key. The code is identical to Gemini — swap
+`LLM("gemini", ...)` for `LLM("vertex", ...)`. See [Gemini](/en/docs/llm-gemini)
+and [Providers](/en/docs/providers).
