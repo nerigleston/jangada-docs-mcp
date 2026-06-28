@@ -177,7 +177,7 @@ verificado no comportamento atual:
 | 3 | **`images=` põe o texto primeiro e as imagens depois** (não intercala por padrão). | Para **rotular** cada imagem, passe tuplas: `images=[("frente", img1), ("verso", img2)]`. Para controle total, monte `history=[Message("user", [...])]` — ver [Mensagens e multimodal](/docs/vision#mensagens-e-multimodal-intercalado). |
 | 4 | **Templates `{{ }}`** só renderizam quando você passa kwargs de variável. | Sem kwargs, o prompt passa intacto. E `{ }` simples (JSON literal) **nunca** é tocado, mesmo com kwargs — JSON no prompt é seguro. |
 | 5 | **Params específicos do SDK** vão por `extra=` (construtor) ou `params=` (chamada). | Para o *thinking* do Gemini, passe `thinking_budget`/`thinking_level` e a lib adapta à versão — ver [Gemini](/docs/llm-gemini). Reserve `extra=` para params sem nome canônico nem perfil. |
-| 6 | **Fallback/retry não cobrem resposta malformada** (ex.: JSON inválido). Só erros de API (timeout, rate limit, 5xx). | `ValidationError` do Pydantic escapa do failover. Onde você faz parsing manual, mantenha um loop/validação próprios. |
+| 6 | **Fallback cobre resposta malformada.** Saída que não casa com o schema vira `OutputValidationError` e o `with_fallback` tenta o próximo modelo (além dos erros de API — timeout, rate limit, 5xx). | O fallback não repete o mesmo modelo (seria o mesmo JSON). Onde você faz parsing manual de texto cru, mantenha um loop/validação próprios. |
 | 7 | **`detect_objects`/`adetect_objects` devolvem só `Detection`** (sem custo). | Use `detect_objects_full`/`adetect_objects_full`: devolvem um `DetectionResult` com `.detections` **e** `.completion`/`.cost`/`.usage` para fechar o acumulador por job. |
 
 <Callout type="info">
