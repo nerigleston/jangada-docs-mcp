@@ -1,0 +1,9 @@
+._*
+.DS_Store
+.git
+.venv
+__pycache__
+*.pyc
+.aws-sam
+dist
+*.egg-info

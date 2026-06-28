@@ -1,0 +1,61 @@
+name: Deploy MCP na AWS Lambda
+
+# A cada push na master (que toque no código/imagem), builda a imagem arm64,
+# envia ao ECR e atualiza a função Lambda. Sem chaves longas: usa OIDC (assume
+# um role na AWS via token do GitHub).
+on:
+  push:
+    branches: [master]
+    paths:
+      - "jangada_docs_mcp/**"
+      - "Dockerfile"
+      - "requirements-lambda.txt"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch: {}
+
+permissions:
+  id-token: write   # necessário p/ o OIDC
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPO: 917727438331.dkr.ecr.us-east-1.amazonaws.com/jangada-docs-mcp
+  FUNCTION: jangada-docs-mcp
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Credenciais AWS (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::917727438331:role/jangada-docs-mcp-ci
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login no ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - uses: docker/setup-qemu-action@v3      # emula arm64 no runner x86
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build & push (arm64, sem attestation)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/arm64
+          push: true
+          provenance: false        # Lambda não aceita manifest list/attestation
+          sbom: false
+          tags: |
+            ${{ env.ECR_REPO }}:latest
+            ${{ env.ECR_REPO }}:${{ github.sha }}
+
+      - name: Atualiza a Lambda
+        run: |
+          aws lambda update-function-code \
+            --function-name "$FUNCTION" \
+            --image-uri "$ECR_REPO:latest" >/dev/null
+          aws lambda wait function-updated --function-name "$FUNCTION"
+          echo "Lambda atualizada. Endpoint: https://mcp.jangada.dev.br/mcp/"

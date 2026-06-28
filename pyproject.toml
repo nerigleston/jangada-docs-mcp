@@ -11,7 +11,7 @@ requires-python = ">=3.10"
 license = "MIT"
 authors = [{ name = "Neri", email = "neri@lizardti.com" }]
 keywords = ["mcp", "jangada", "jangada-ai", "llm", "docs", "claude", "cursor"]
-dependencies = ["jangada-ai[mcp]>=0.35.0"]
+dependencies = ["jangada-ai[mcp]>=0.36.0"]
 
 [project.urls]
 Homepage = "https://github.com/nerigleston/jangada-docs-mcp"

@@ -122,7 +122,7 @@ def jangada_buscar(termo: str = "", max_resultados: int = 30, query: str = "") -
 def main() -> None:
     """Entry point (console script `jangada-docs-mcp`): sobe o servidor por stdio."""
     serve_mcp(
-        "jangada-docs",
+        "jangada-mcp",
         tools=[jangada_indice, jangada_listar_docs, jangada_ler_doc, jangada_buscar],
     )
 

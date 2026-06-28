@@ -6,8 +6,19 @@ Cursor…) acesso a **toda a documentação da biblioteca [jangada](https://gith
 sem inventar nomes de função, assinaturas ou parâmetros.
 
 > Feito **para desenvolvedores** que constroem com o `jangada`. É o próprio
-> jangada **sendo um servidor MCP** (`serve_mcp`, protocolo stdio). A doc vem
+> jangada **sendo um servidor MCP** (`serve_mcp`/`build_mcp_app`). A doc vem
 > embutida no pacote — self-contained, sem depender de rede em runtime.
+
+## Hospedado (HTTP) — sem instalar nada
+
+Já há uma instância pública em **`https://mcp.jangada.dev.br/mcp/`** (note a barra
+final). Conecte por HTTP:
+```bash
+claude mcp add jangada-mcp --transport http https://mcp.jangada.dev.br/mcp/
+```
+(roda na AWS Lambda + API Gateway — passo a passo, IaC e CI/CD em [DEPLOY.md](DEPLOY.md).)
+
+Prefere local/stdio (sem depender do servidor hospedado)? Veja o `uvx` abaixo.
 
 ---
 

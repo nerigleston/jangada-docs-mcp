@@ -1,0 +1,68 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  jangada-mcp — servidor MCP (build_mcp_app do jangada) na AWS Lambda (container,
+  arm64) atrás de API Gateway HTTP API, com domínio mcp.jangada.dev.br.
+  Endpoint MCP: https://<dominio>/mcp/
+
+Parameters:
+  DomainName:
+    Type: String
+    Default: mcp.jangada.dev.br
+  CertificateArn:
+    Type: String
+    # cert ACM curinga *.jangada.dev.br (mesma região da API: us-east-1)
+    Default: arn:aws:acm:us-east-1:917727438331:certificate/abc158c5-b759-41b8-b6d7-28a835cc679f
+  HostedZoneId:
+    Type: String
+    Default: Z08720531K910N9F668BG   # zona jangada.dev.br no Route 53
+
+Resources:
+  # API Gateway HTTP API + domínio custom + registro Route53 (o SAM cria tudo).
+  # HTTP API invoca a Lambda direto (sem assinar corpo) — por isso funciona com
+  # MCP, que é todo POST com body. (Function URL pública é bloqueada na conta e
+  # CloudFront+OAC não assina o corpo do POST → ver DEPLOY.md.)
+  McpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      Domain:
+        DomainName: !Ref DomainName
+        CertificateArn: !Ref CertificateArn
+        EndpointConfiguration: REGIONAL
+        Route53:
+          HostedZoneId: !Ref HostedZoneId
+
+  McpFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      Architectures: [arm64]          # build nativo no Mac e mais barato
+      MemorySize: 1024                # mais CPU -> cold start menor (~3-4s)
+      Timeout: 30
+      # FASTMCP_* não se aplica aqui (é o servidor do jangada). O app é stateless
+      # por construção (build_mcp_app(..., stateless=True, json_response=True)).
+      Events:
+        Root:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref McpApi
+            Path: /
+            Method: ANY
+        Proxy:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref McpApi
+            Path: /{proxy+}          # captura /mcp/ e tudo abaixo
+            Method: ANY
+    Metadata:
+      Dockerfile: Dockerfile
+      DockerContext: .
+      DockerTag: latest
+
+Outputs:
+  McpEndpoint:
+    Description: Endpoint MCP (note a barra final)
+    Value: !Sub "https://${DomainName}/mcp/"
+  ApiDefaultEndpoint:
+    Description: Endpoint padrão da API (sem domínio custom)
+    Value: !Sub "https://${McpApi}.execute-api.${AWS::Region}.amazonaws.com/mcp/"
