@@ -5,7 +5,7 @@ name: Deploy MCP na AWS Lambda
 # um role na AWS via token do GitHub).
 on:
   push:
-    branches: [master]
+    branches: [main]
     paths:
       - "jangada_docs_mcp/**"
       - "Dockerfile"
