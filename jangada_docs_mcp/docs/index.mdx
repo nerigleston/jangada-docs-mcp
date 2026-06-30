@@ -7,7 +7,7 @@ A **Jangada AI** 🛶 é uma **camada fina PT-BR sobre os SDKs de LLM, com
 observability nativa em 1 linha no `.env`**. O objetivo é **trocar
 provider/model/api_key sem mudar o resto do código**, com templates `{{ }}`,
 fluxos encadeados, structured output (Pydantic), vision, áudio, async e fallback
-por erro. Funciona com Anthropic, OpenAI, Groq, Gemini, OpenRouter e os gateways
+por erro. Funciona com Anthropic, OpenAI, Groq, Gemini, Mistral, OpenRouter e os gateways
 de nuvem (AWS Bedrock, Azure OpenAI, Vertex AI).
 
 ## Instalação
@@ -20,7 +20,7 @@ pip install "jangada-ai[anthropic]"
 
 <Cards>
   <Card title="Primeiros passos" href="/docs/getting-started" description="Instale, configure a chave e faça a primeira chamada." />
-  <Card title="Providers e chaves" href="/docs/providers" description="Anthropic, OpenAI, Groq e Gemini com a mesma API." />
+  <Card title="Providers e chaves" href="/docs/providers" description="Anthropic, OpenAI, Groq, Gemini e Mistral com a mesma API." />
   <Card title="Structured output" href="/docs/structured-output" description="Saída validada com Pydantic em qualquer provider." />
   <Card title="Tools (function calling)" href="/docs/tools" description="O modelo chama suas funções, agnóstico de provider." />
   <Card title="RAG" href="/docs/rag" description="Embeddings, vector store e busca híbrida." />
@@ -30,7 +30,7 @@ pip install "jangada-ai[anthropic]"
 ## Seções
 
 - **Começando** — getting-started, parâmetros, providers, capacidades.
-- **Providers** — Anthropic, OpenAI, Groq, Gemini.
+- **Providers** — Anthropic, OpenAI, Groq, Gemini, Mistral.
 - **Capacidades** — structured output, tools, vision, áudio, documentos, detecção, streaming, RAG, MCP, observability.
 - **Confiabilidade** — erros, retry/fallback, custo, debug.
 - **Tutoriais** — passo a passo do zero ao fallback, extração estruturada, RAG e agente MCP.

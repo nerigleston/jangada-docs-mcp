@@ -1,0 +1,70 @@
+---
+title: "Mistral"
+description: "Provider mistral. Modelos da Mistral via SDK oficial mistralai com a mesma API normalizada da jangada: texto, vision, streaming, structured output, tools, embeddings, OCR/Document AI e transcrição Voxtral."
+---
+
+Provider `mistral`. Adapter sobre o **SDK oficial `mistralai`** (não é o caminho
+OpenAI-compat). Dá acesso aos modelos da Mistral pela mesma `LLM(...)` da jangada,
+com texto, vision, streaming, structured output, function calling, embeddings,
+OCR/Document AI e transcrição de áudio (Voxtral).
+
+```bash
+pip install "jangada-ai[mistral]"
+```
+
+- **`provider=`**: `"mistral"`
+- **Autenticação**: variável de ambiente `MISTRAL_API_KEY` (ou `api_key=` no
+  construtor).
+- **Modelo**: o id da Mistral, ex.: `mistral-large-latest`, `mistral-medium-latest`,
+  `mistral-small-latest`, `ministral-8b-latest`, `codestral-latest`, `mistral-embed`,
+  `mistral-ocr-latest`, `voxtral-mini-latest`.
+
+```python
+from jangada_ai import LLM
+
+llm = LLM("mistral", "mistral-large-latest")
+resp = llm.complete("Resuma {{ tema }} em uma frase.", tema="jangadas")
+print(resp.text, resp.cost)
+```
+
+## Configuração via ambiente
+
+No `.env` (ou variáveis do processo):
+
+```bash
+MISTRAL_API_KEY=...
+```
+
+## O que faz
+
+- **Texto** e **streaming** via `chat.complete`/`chat.stream` (e versões async).
+- **Structured output** (`parse`): helper nativo `chat.parse(response_format=Modelo)`
+  — aceita o modelo Pydantic direto e devolve `message.parsed`.
+- **Tools** (`tools=`/`tool_choice=`): formato OpenAI; `tool_choice` aceita
+  `auto`/`none`/`any`/`required` ou o nome de uma função (força a chamada).
+- **Vision** (`images=`): modelos multimodais (Pixtral/medium/large).
+- **Embeddings** (`embed`/`aembed`) com `mistral-embed`.
+- **OCR / Document AI** (`ocr`/`aocr`) com `mistral-ocr-latest`: PDF/imagem →
+  markdown por página, bounding boxes e imagens extraídas.
+- **Transcrição** (`transcribe`/`atranscribe`) com Voxtral.
+
+```python
+# OCR: aceita URL, caminho, bytes, ImagePart ou um dict `document` da API.
+ocr = LLM("mistral", "mistral-ocr-latest")
+doc = ocr.ocr("https://arxiv.org/pdf/2310.06825.pdf", include_images=True)
+print(len(doc.pages), doc.pages[0].markdown)
+
+# Transcrição (Voxtral).
+stt = LLM("mistral", "voxtral-mini-latest")
+print(stt.transcribe("audio.mp3", language="pt").text)
+```
+
+## Quirks
+
+- A Mistral usa `random_seed` (a jangada mapeia o canônico `seed`) e **não** tem
+  `top_k` (descartado). O conteúdo incremental do streaming vem em
+  `event.data.choices[0].delta.content`.
+- **MCP server-side não é suportado** pela jangada no Mistral — use o `MCPClient`
+  client-side ou os providers Anthropic/OpenAI/Groq para MCP remoto por URL.
+
+Veja [Providers](/docs/providers) e [Matriz de capacidades](/docs/capabilities).

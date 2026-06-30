@@ -1,6 +1,6 @@
 ---
 title: "Providers and API keys"
-description: "jangada supports five providers (Anthropic, OpenAI, Groq, Gemini, OpenRouter), each isolated in an adapter that translates the normalized types (Message/Completion) to the native SDK."
+description: "jangada supports several providers (Anthropic, OpenAI, Groq, Gemini, Mistral, OpenRouter and cloud gateways), each isolated in an adapter that translates the normalized types (Message/Completion) to the native SDK."
 ---
 
 jangada supports several providers, each isolated in an *adapter* that translates
@@ -12,6 +12,7 @@ the normalized types (`Message`/`Completion`) to the native SDK.
 | OpenAI      | `openai`     | `OPENAI_API_KEY`     | `jangada-ai[openai]`        |
 | Groq        | `groq`       | `GROQ_API_KEY`       | `jangada-ai[groq]`          |
 | Gemini      | `gemini`     | `GEMINI_API_KEY`     | `jangada-ai[gemini]`        |
+| Mistral     | `mistral`    | `MISTRAL_API_KEY`    | `jangada-ai[mistral]`       |
 | OpenRouter  | `openrouter` | `OPENROUTER_API_KEY` | `jangada-ai[openai]`        |
 | AWS Bedrock | `bedrock`    | AWS credentials (`AWS_ACCESS_KEY_ID`…) | `jangada-ai[bedrock]`  |
 | Azure OpenAI| `azure`      | `AZURE_OPENAI_API_KEY` + `AZURE_OPENAI_ENDPOINT` | `jangada-ai[openai]` |

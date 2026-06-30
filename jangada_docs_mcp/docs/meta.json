@@ -13,6 +13,7 @@
     "llm-openai",
     "llm-groq",
     "llm-gemini",
+    "llm-mistral",
     "llm-openrouter",
     "llm-bedrock",
     "llm-azure",

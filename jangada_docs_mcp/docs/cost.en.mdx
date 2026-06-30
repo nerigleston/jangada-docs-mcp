@@ -17,8 +17,8 @@ along the chain.
 
 ## Pricing table
 
-Prices live in `pricing.py` (approximate, per 1M tokens). You can
-register/adjust them:
+Prices come from a JSON catalog (approximate, per 1M tokens). You can
+register/adjust them at runtime:
 
 ```python
 from jangada_ai import register_price, price_for
@@ -29,6 +29,39 @@ print(price_for("gpt-4o-mini"))
 
 > ⚠️ The values are **approximate** and serve for estimation/observability —
 > do not treat them as a billing source.
+
+## Always-fresh prices (without updating the lib)
+
+Prices live in a **JSON catalog** (no longer hardcoded). The copy bundled in the
+package is just the **offline fallback**; jangada publishes the catalog at
+`jangada.dev.br/prices.json` and applies it **on its own, with no code from you** —
+and **without running `pip install -U`**.
+
+**Automatic (default).** The first time a cost is computed (right below each provider
+call), the lib fires a **background** refresh of the catalog, cached for **1 day**.
+You just use the LLM normally:
+
+```python
+comp = llm.complete("...")
+print(comp.cost)   # already tends to use today's prices (background refresh)
+```
+
+- **Non-blocking**: runs on a daemon thread; `import` never touches the network.
+- **At most once/day**: cached at `~/.cache/jangada/prices.json` (and once per process).
+- **Resilient**: network failed? stays on cache/embedded — never raises.
+- **Disable**: env `JANGADA_NO_PRICE_REFRESH=1`.
+
+**Manual (`refresh_prices`).** For explicit/synchronous control (boot, force now,
+custom URL):
+
+```python
+jangada_ai.refresh_prices()                       # synchronous, respects the cache
+jangada_ai.refresh_prices(ttl=3600, force=True)   # revalidate / force now
+```
+
+URL defaults to `https://jangada.dev.br/prices.json` (override with `url=` or the
+`JANGADA_PRICES_URL` env var; no `.env` required). The manual override
+(`register_price`) takes priority over everything.
 
 ## Multimodal cost
 
@@ -64,3 +97,5 @@ print(price_for("gpt-4o-mini"))
 ## Example
 
 `examples/retry_cost_example.py` — runnable script.
+
+`examples/pricing_refresh_example.py` — dynamic prices with `refresh_prices()`.
