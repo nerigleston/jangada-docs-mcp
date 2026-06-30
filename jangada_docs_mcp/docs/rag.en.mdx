@@ -119,7 +119,7 @@ rag = RAG(emb, vector_store("memory"), chat=chat, reranker=Reranker.cohere())
 rag.ask("How do I run an incremental backup?")
 ```
 
-Constructors: `Reranker.cohere(model="rerank-v3.5")`, `Reranker.voyage(model="rerank-2")`
+Constructors: `Reranker.cohere(model="rerank-v3.5")`, `Reranker.voyage(model="rerank-2.5")`
 (extra `jangada-ai[rerank]` + `COHERE_API_KEY`/`VOYAGE_API_KEY`) or
 `Reranker.fn(lambda query, docs: [scores])` for a custom scorer. Per call,
 `rag.search(q, rerank=False)` disables it.
