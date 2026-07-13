@@ -38,9 +38,16 @@ llm = LLM("gemini", "gemini-2.5-flash")
   `stop`→`stop_sequences`; `temperature`/`top_p`/`top_k`/`seed` pass through.
   It is the only provider with `top_k`.
 - **Model profile** (`profiles.py`): `gemini-3.x` drops sampling
-  (`temperature`/`top_p`/`top_k`). Multi-turn function calling in 3.x requires
-  preserving the *thought signatures* (history integrity). See
+  (`temperature`/`top_p`/`top_k`). See
   [Parameters and profiles](/en/docs/parameters).
+- **Multi-turn function calling in 3.x — *thought signatures* (handled by the
+  library)**: Gemini 3.x attaches an opaque `thought_signature` to every function
+  call and requires it back, unchanged, when you resend the history. jangada
+  preserves this automatically — the value travels in the opaque `metadata: dict`
+  field of `ToolCall`/`ToolCallPart`, and the adapter re-attaches it when
+  rebuilding the history. So `tools=`, `Agent` and `MCPClient` work across turns
+  without you touching anything. `gemini-2.5` does not use this field. (fixed in
+  1.3.1)
 - **Response** (`Completion`): `usage` comes from `usage_metadata`
   (`prompt_token_count`/`candidates_token_count`).
 
