@@ -37,6 +37,11 @@ with observability_session(name="rag.documents.ingest"):
 The observation records latency, input tokens, estimated cost, vector count and
 dimensions, and the `embeddings` capability.
 
+For Gemini, counting follows `usage_metadata` → `count_tokens()` with the same
+model/batch → local estimation as the last fallback. Pricing comes from
+`jangada.dev.br/prices.json`, never from a value hardcoded in the adapter. The
+`usageSource` and `usageEstimated` fields distinguish real counts from estimates.
+
 The flag must be "truthy" (`1`/`true`/`yes`/`on`) **and** the token present; if
 either is missing, the mode stays off and nothing is sent (zero cost). Network
 failures never bring your app down — sending is best-effort on a daemon thread.

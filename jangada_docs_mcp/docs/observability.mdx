@@ -37,6 +37,11 @@ with observability_session(name="rag.documents.ingest"):
 A observation registra latência, tokens de entrada, custo estimado, quantidade e
 dimensão dos vetores e a capability `embeddings`.
 
+No Gemini, a contagem segue `usage_metadata` → `count_tokens()` com o mesmo
+modelo/lote → estimativa local como último fallback. O preço vem do catálogo
+`jangada.dev.br/prices.json`, nunca de um valor hardcoded no adapter. Os campos
+`usageSource` e `usageEstimated` distinguem contagem real de estimativa.
+
 A flag precisa ser "truthy" (`1`/`true`/`yes`/`on`/`sim`) **e** o token presente;
 faltando qualquer um, o modo fica desligado e nada é enviado (custo zero). Falhas
 de rede nunca derrubam a aplicação — o envio é best-effort numa thread daemon.
