@@ -182,6 +182,26 @@ They combine with each other and with `reranker=`.
 
 ## Incremental indexing
 
+Since **v1.4.3**, `sync_document`/`sync_texts` work both in memory and with
+PostgreSQL/pgvector. They preserve unchanged chunks without new embeddings,
+insert only new hashes, update metadata/position, and remove missing hashes.
+
+```python
+result = rag.sync_document(
+    "manual.pdf",
+    name="manual.pdf",
+    document_id="manual",
+    metadata={"source": "manual.pdf"},
+)
+# {"added": 3, "removed": 1, "unchanged": 42}
+```
+
+For pgvector, migration of the `hash` column and partial unique index is
+idempotent. Each version runs in a transaction with an advisory lock per
+`document_id`, preventing duplicates and mixed versions under concurrency.
+Extraction, embedding, or database failures preserve the previous version.
+MongoDB does not yet implement incremental synchronization.
+
 `sync_document`/`sync_texts` reindex **only what changed** (dedup by content
 hash): embed new chunks and drop removed ones. Requires `document_id`.
 
