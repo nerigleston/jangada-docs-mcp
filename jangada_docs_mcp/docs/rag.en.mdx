@@ -46,6 +46,9 @@ latency, tokens, estimated cost, and the `embeddings` capability. Inside
 `observability_session(name="rag.documents.ingest")`, they appear in the
 ingestion trace.
 
+Since **v1.4.4**, the observation's `output` field contains the complete vector
+array, always using the batch shape (`[[...], [...]]`).
+
 Since **v1.4.2**, when Gemini does not return token usage for embeddings, Jangada
 calls `count_tokens()` with the same model and batch. Cost combines this count
 with the price from `jangada.dev.br/prices.json`; the local approximation of

@@ -46,6 +46,9 @@ latência, tokens, custo estimado e capability `embeddings`. Dentro de
 `observability_session(name="rag.documents.ingest")`, elas aparecem no trace da
 ingestão.
 
+Desde a **v1.4.4**, o campo `output` da observação contém o array completo dos
+vetores, sempre no formato de lote (`[[...], [...]]`).
+
 Desde a **v1.4.2**, quando o Gemini não devolve tokens no embedding, a Jangada
 chama `count_tokens()` com o mesmo modelo e lote. O custo combina essa contagem
 com o preço de `jangada.dev.br/prices.json`; a estimativa local de aproximadamente
