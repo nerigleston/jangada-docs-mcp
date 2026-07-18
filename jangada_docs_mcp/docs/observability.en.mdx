@@ -25,6 +25,18 @@ llm = LLM("openai", "gpt-4o-mini")
 resp = llm.complete("Summarize: ...")   # already sent to the platform, on its own
 ```
 
+Embeddings are also instrumented automatically since v1.4.1:
+
+```python
+embedder = LLM("openai", "text-embedding-3-small")
+
+with observability_session(name="rag.documents.ingest"):
+    vectors = embedder.embed(["first chunk", "second chunk"])
+```
+
+The observation records latency, input tokens, estimated cost, vector count and
+dimensions, and the `embeddings` capability.
+
 The flag must be "truthy" (`1`/`true`/`yes`/`on`) **and** the token present; if
 either is missing, the mode stays off and nothing is sent (zero cost). Network
 failures never bring your app down — sending is best-effort on a daemon thread.
@@ -77,10 +89,9 @@ and become a regression case in [evals](/docs/eval).
 ## What is captured
 
 From each call: `provider`, `model`, `promptTokens`/`completionTokens` (from
-`usage`), `costUsd` (from `cost`), latency, the **input** (the messages sent to
-the model — system/user/assistant as text; very long content is truncated), the
-**output** (response text), and the **tool calls** the model requested (`tools`:
-id/name/args).
+`usage`), `costUsd` (from `cost`), latency, the **input** (messages or embedding
+texts; very long content is truncated), the **output** (response text, or vector
+count/dimensions), and the **tool calls** the model requested (`tools`: id/name/args).
 
 Each observation has a **status**: `OK`, or **`INCOMPLETE`** when the response was
 cut off by the token limit (`finish_reason == "length"`), along with the
@@ -98,6 +109,9 @@ Detection is automatic from the call arguments: `images=` → `vision`, `files=`
 `documents`, `tools=` → `tools`, `mcp_servers=` → `mcp`, `parse()` →
 `structured_output`, `guardrails` → `guardrails`. `tools` is also derived when the
 model requests tool calls.
+
+`embed()`/`aembed()` register `embeddings` directly, including sessions that
+contain only RAG ingestion.
 
 ## In the dashboard
 

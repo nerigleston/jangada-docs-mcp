@@ -25,6 +25,18 @@ llm = LLM("openai", "gpt-4o-mini")
 resp = llm.complete("Resuma: ...")   # já enviado à plataforma, sozinho
 ```
 
+Embeddings também são instrumentados automaticamente desde a v1.4.1:
+
+```python
+embedder = LLM("openai", "text-embedding-3-small")
+
+with observability_session(name="rag.documents.ingest"):
+    vectors = embedder.embed(["primeiro chunk", "segundo chunk"])
+```
+
+A observation registra latência, tokens de entrada, custo estimado, quantidade e
+dimensão dos vetores e a capability `embeddings`.
+
 A flag precisa ser "truthy" (`1`/`true`/`yes`/`on`/`sim`) **e** o token presente;
 faltando qualquer um, o modo fica desligado e nada é enviado (custo zero). Falhas
 de rede nunca derrubam a aplicação — o envio é best-effort numa thread daemon.
@@ -77,10 +89,10 @@ caso de regressão nas [evals](/docs/eval).
 ## O que é capturado
 
 De cada chamada: `provider`, `model`, `promptTokens`/`completionTokens` (de
-`usage`), `costUsd` (de `cost`), latência, o **input** (as mensagens enviadas ao
-modelo — system/user/assistant em texto, conteúdos muito longos são truncados), o
-**output** (texto da resposta) e as **tool calls** que o modelo pediu (`tools`:
-id/name/args).
+`usage`), `costUsd` (de `cost`), latência, o **input** (mensagens ou textos de
+embedding; conteúdos muito longos são truncados), o **output** (texto da resposta,
+ou quantidade/dimensão dos embeddings) e as **tool calls** que o modelo pediu
+(`tools`: id/name/args).
 
 Cada observation tem um **status**: `OK`, ou **`INCOMPLETE`** quando a resposta
 foi cortada por limite de tokens (`finish_reason == "length"`), junto do motivo
@@ -98,6 +110,9 @@ A detecção é automática a partir dos argumentos da chamada: `images=` → `v
 `files=` → `documents`, `tools=` → `tools`, `mcp_servers=` → `mcp`, `parse()` →
 `structured_output`, `guardrails` → `guardrails`. `tools` também é derivado
 quando o modelo pede tool calls.
+
+`embed()`/`aembed()` registram `embeddings` diretamente, inclusive quando a
+session contém apenas a ingestão RAG.
 
 ## No dashboard
 

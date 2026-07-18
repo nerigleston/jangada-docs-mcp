@@ -23,17 +23,28 @@ emb = LLM("openai", "text-embedding-3-small")   # ou ("gemini", "gemini-embeddin
 emb.embed("uma frase")            # -> vetor (list[float])
 emb.embed(["a", "b"])             # -> lista de vetores
 emb.embed(textos, task="document")  # task: "document" ao indexar, "query" ao buscar
+emb.embed(textos, batch_size=50)    # Gemini: textos por requisição (1..100)
 ```
 
 `task` vira `task_type` no Gemini (`RETRIEVAL_DOCUMENT`/`RETRIEVAL_QUERY`); a
 OpenAI ignora. `dimensions` (OpenAI) / `output_dimensionality` (Gemini) vão via `**opts`.
 
+Desde a **v1.4.0**, `batch_size` (1..100, padrão 100) controla quantos textos o
+Gemini envia por requisição. A API aceita no máximo 100 itens por
+`BatchEmbedContents`; entradas maiores são divididas automaticamente, preservando
+ordem e quantidade. OpenAI, Azure e OpenRouter ignoram esse parâmetro.
+
 | Provider | Embeddings? | Modelo típico |
 |----------|:-----------:|---------------|
 | OpenAI   | ✅ | `text-embedding-3-small` / `-large` |
-| Gemini   | ✅ | `gemini-embedding-001` |
+| Gemini   | ✅ | `gemini-embedding-001` / `gemini-embedding-2` |
 | Anthropic| ❌ | — (use Voyage/Cohere por fora) |
 | Groq     | ❌ | — |
+
+Desde a **v1.4.1**, `embed()`/`aembed()` também geram observações automáticas com
+latência, tokens, custo estimado e capability `embeddings`. Dentro de
+`observability_session(name="rag.documents.ingest")`, elas aparecem no trace da
+ingestão.
 
 ## Pipeline completo (`RAG`)
 
@@ -213,4 +224,3 @@ e [Observabilidade](/docs/observability).
 ## Exemplo
 
 `examples/rag_example.py` — script executável.
-
