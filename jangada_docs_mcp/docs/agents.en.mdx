@@ -138,7 +138,8 @@ agent = Agent(llm, role="Support", memory=RAGMemory(rag, k=3))
 
 ### Sequential (handoff)
 
-Each agent runs in order and receives the previous one's output as context:
+By default each agent runs in order and receives **only the previous agent's
+output** as context (not the accumulated transcript):
 
 ```python
 from jangada_ai import LLM, Agent, Squad
@@ -152,6 +153,21 @@ res = squad.run("Write a paragraph about northeastern Brazilian rafts.")
 print(res.text)            # the last agent's output
 print(res.outputs)         # {"Researcher": "...", "Writer": "..."}
 ```
+
+**Context semantics** (`context=`):
+
+- **`"last"`** (default): each agent gets only the immediately previous output. The
+  per-hop input is ~constant — chain cost grows **O(N)**, not O(N²).
+- **`"full"`**: each agent gets the **accumulated transcript** (every prior output,
+  labeled by role). More context, **O(N²)** cost on long chains.
+
+```python
+Squad([researcher, writer], context="full")   # whole transcript at each hop
+```
+
+**Per-agent observability**: `res.steps` has one entry per agent with
+`(role, usage, cost, cost_complete, dt)` — so you can watch input/cost/latency grow
+(or not) at each hop without unpacking the `Squad` by hand.
 
 ### Hierarchical (delegation)
 
