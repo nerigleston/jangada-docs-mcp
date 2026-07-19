@@ -30,8 +30,8 @@ print(comp.parsed.name, comp.parsed.age)   # João 30
 > (it won't retry the same one). Fallback covers API errors **and** malformed output.
 
 <Callout type="warn">
-  Remember that `max_tokens` defaults to **1024**. Extracting **large lists**
-  without raising that limit truncates the JSON. In that case jangada raises
+  `max_tokens` has a high default of **8192** since v1.4.5. Extractions that
+  exceed this limit may still truncate JSON. In that case jangada raises
   `errors.TruncatedError` (message: "raise max_tokens") **before** attempting to
   validate — you don't get a confusing cut-off-JSON error from Pydantic. The fix is
   to pass a higher `max_tokens` — see [Generation parameters](/en/docs/parameters).

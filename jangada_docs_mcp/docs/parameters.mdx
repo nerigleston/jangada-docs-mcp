@@ -18,26 +18,24 @@ o nome nativo do SDK, descartando os não suportados.
 | `seed`        | `seed`                 | *(descartado)*   | `seed`                |
 
 ```python
-llm = LLM("anthropic", "claude-opus-4-8", temperature=0.2, max_tokens=512)
+llm = LLM("anthropic", "claude-opus-4-8", temperature=0.2)  # max_tokens=8192
 
 # override por chamada
-llm.complete("...", params={"temperature": 0.9})
+llm.complete("...", params={"temperature": 0.9, "max_tokens": 16384})
 
 # clone com novos defaults
 criativo = llm.with_params(temperature=1.0)
 ```
 
-<Callout type="warn">
-  **`max_tokens` tem default de `1024`.** Se você não passar `max_tokens`, toda
-  resposta é cortada nesse limite — silenciosamente, sem erro. O sintoma mais
-  comum é **structured output de listas grandes que volta truncado** (JSON
-  incompleto / Pydantic falhando ao validar). Para extrações longas, suba o
-  limite explicitamente:
+<Callout type="info">
+  Desde a **v1.4.5**, `max_tokens` tem default alto de **`8192`** em todos os
+  providers. Para modelos com outro limite ou extrações ainda maiores, ajuste o
+  valor explicitamente:
 
   ```python
-  llm = LLM("openai", "gpt-5", max_tokens=8192)
+  llm = LLM("openai", "gpt-5", max_tokens=16384)
   # ou só nesta chamada:
-  llm.parse("Extraia todos os itens.", Itens, files=[...], params={"max_tokens": 8192})
+  llm.parse("Extraia todos os itens.", Itens, files=[...], params={"max_tokens": 16384})
   ```
 </Callout>
 
@@ -82,4 +80,3 @@ Veja [Providers](/docs/providers) e [Estendendo](/docs/extending).
 ## Exemplo
 
 `examples/model_profiles_example.py` — script executável.
-

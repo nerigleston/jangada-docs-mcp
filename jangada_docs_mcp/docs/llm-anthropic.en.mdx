@@ -40,7 +40,7 @@ llm = LLM("anthropic", "claude-opus-4-8")
 - **Parameters**: `temperature`, `max_tokens`, `top_p`, `top_k`, `stop`
   (→ `stop_sequences`). It has **no** `seed` (it is dropped).
 - **`max_tokens` is required** in the Claude API — jangada already uses a default
-  (`1024`) when you don't provide one.
+  high value (`8192`) when you don't provide one.
 - **System**: goes in the request's `system` field (not as a message).
 - **Response** (`Completion`): `usage` from native `input_tokens`/`output_tokens`;
   `raw` with the SDK object.

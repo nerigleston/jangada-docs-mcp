@@ -172,7 +172,7 @@ verificado no comportamento atual:
 
 | # | Ponto | Como lidar |
 |---|-------|------------|
-| 1 | **`max_tokens` default = 1024.** Trunca listas/extrações grandes. | Em structured output a lib levanta `errors.TruncatedError` ("aumente max_tokens") antes do erro confuso de JSON. Defina `max_tokens` folgado (ex.: 8192) — ver [Parâmetros](/docs/parameters). |
+| 1 | **`max_tokens` default = 8192.** É alto, mas extrações maiores ainda podem truncar. | Em structured output a lib levanta `errors.TruncatedError` ("aumente max_tokens") antes do erro confuso de JSON. Ajuste conforme o modelo e o caso — ver [Parâmetros](/docs/parameters). |
 | 2 | **`parse`/`aparse` retornam `Completion`**, não a instância Pydantic. | Leia sempre `resp.parsed` (ver [Structured output](/docs/structured-output)). |
 | 3 | **`images=` põe o texto primeiro e as imagens depois** (não intercala por padrão). | Para **rotular** cada imagem, passe tuplas: `images=[("frente", img1), ("verso", img2)]`. Para controle total, monte `history=[Message("user", [...])]` — ver [Mensagens e multimodal](/docs/vision#mensagens-e-multimodal-intercalado). |
 | 4 | **Templates `{{ }}`** só renderizam quando você passa kwargs de variável. | Sem kwargs, o prompt passa intacto. E `{ }` simples (JSON literal) **nunca** é tocado, mesmo com kwargs — JSON no prompt é seguro. |

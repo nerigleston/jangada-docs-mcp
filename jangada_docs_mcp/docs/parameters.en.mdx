@@ -18,26 +18,24 @@ the SDK's native name, discarding the unsupported ones.
 | `seed`        | `seed`                 | *(discarded)*    | `seed`                |
 
 ```python
-llm = LLM("anthropic", "claude-opus-4-8", temperature=0.2, max_tokens=512)
+llm = LLM("anthropic", "claude-opus-4-8", temperature=0.2)  # max_tokens=8192
 
 # per-call override
-llm.complete("...", params={"temperature": 0.9})
+llm.complete("...", params={"temperature": 0.9, "max_tokens": 16384})
 
 # clone with new defaults
 creative = llm.with_params(temperature=1.0)
 ```
 
-<Callout type="warn">
-  **`max_tokens` defaults to `1024`.** If you don't pass `max_tokens`, every
-  response is cut at that limit — silently, with no error. The most common
-  symptom is **structured output of large lists coming back truncated**
-  (incomplete JSON / Pydantic failing to validate). For long extractions, raise
-  the limit explicitly:
+<Callout type="info">
+  Since **v1.4.5**, `max_tokens` has a high default of **`8192`** across all
+  providers. For models with a different limit or even larger extractions, set
+  it explicitly:
 
   ```python
-  llm = LLM("openai", "gpt-5", max_tokens=8192)
+  llm = LLM("openai", "gpt-5", max_tokens=16384)
   # or just for this call:
-  llm.parse("Extract every item.", Items, files=[...], params={"max_tokens": 8192})
+  llm.parse("Extract every item.", Items, files=[...], params={"max_tokens": 16384})
   ```
 </Callout>
 

@@ -30,8 +30,8 @@ print(comp.parsed.nome, comp.parsed.idade)   # João 30
 > (não repete o mesmo). O fallback cobre erro de API **e** resposta malformada.
 
 <Callout type="warn">
-  Lembre que `max_tokens` tem default de **1024**. Extrair **listas grandes**
-  sem subir esse limite trunca o JSON. Nesse caso a jangada levanta
+  `max_tokens` tem default alto de **8192** desde a v1.4.5. Extrações que excedam
+  esse limite ainda podem truncar o JSON. Nesse caso a jangada levanta
   `errors.TruncatedError` (com mensagem "aumente max_tokens") **antes** de tentar
   validar — você não recebe um erro confuso de JSON cortado do Pydantic. A correção
   é passar `max_tokens` maior — veja [Parâmetros de geração](/docs/parameters).
@@ -67,4 +67,3 @@ Funciona junto com [Vision](/docs/vision) e [Documentos](/docs/documents): passe
 ## Exemplo
 
 `examples/structured_example.py` — script executável.
-

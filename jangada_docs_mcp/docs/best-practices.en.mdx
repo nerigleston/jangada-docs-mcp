@@ -169,7 +169,7 @@ against the current behavior:
 
 | # | Point | How to handle |
 |---|-------|---------------|
-| 1 | **`max_tokens` defaults to 1024.** Truncates large lists/extractions. | In structured output the library raises `errors.TruncatedError` ("raise max_tokens") before the confusing JSON error. Set a generous `max_tokens` (e.g. 8192) — see [Parameters](/docs/parameters). |
+| 1 | **`max_tokens` defaults to 8192.** It is high, but larger extractions may still truncate. | In structured output the library raises `errors.TruncatedError` ("raise max_tokens") before the confusing JSON error. Adjust it for the model and use case — see [Parameters](/docs/parameters). |
 | 2 | **`parse`/`aparse` return a `Completion`**, not the Pydantic instance. | Always read `resp.parsed` (see [Structured output](/docs/structured-output)). |
 | 3 | **`images=` puts text first, then the images** (no interleaving by default). | To **label** each image, pass tuples: `images=[("front", img1), ("back", img2)]`. For full control, build `history=[Message("user", [...])]` — see [Messages and multimodal](/docs/vision#messages-and-interleaved-multimodal). |
 | 4 | **`{{ }}` templates** only render when you pass variable kwargs. | With no kwargs the prompt passes through intact. And plain `{ }` (literal JSON) is **never** touched, even with kwargs — JSON in the prompt is safe. |

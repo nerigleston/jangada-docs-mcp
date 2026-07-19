@@ -40,7 +40,7 @@ llm = LLM("anthropic", "claude-opus-4-8")
 - **Parâmetros**: `temperature`, `max_tokens`, `top_p`, `top_k`, `stop`
   (→ `stop_sequences`). **Não** tem `seed` (é descartado).
 - **`max_tokens` é obrigatório** na API do Claude — a jangada já usa um default
-  (`1024`) quando você não informa.
+  alto (`8192`) quando você não informa.
 - **System**: vai no campo `system` da requisição (não como mensagem).
 - **Resposta** (`Completion`): `usage` de `input_tokens`/`output_tokens` nativos;
   `raw` com o objeto da SDK.
@@ -49,4 +49,3 @@ llm = LLM("anthropic", "claude-opus-4-8")
 
 Relacionado: [Matriz de capacidades](/docs/capabilities),
 [Structured output](/docs/structured-output).
-
