@@ -44,6 +44,31 @@ res = g.run(...)        # GraphResult agrega usage/cost
 Veja os exemplos executáveis em
 `examples/graph_example.py`.
 
+### Fan-out robusto e observável (`parallel`)
+
+`parallel` aceita opções para produção:
+
+```python
+g.parallel(
+    "analises", branches, join="sintese",
+    on_error="skip",        # um ramo que falha não derruba o run (default: "raise")
+    max_concurrency=4,      # teto de ramos simultâneos (evita rate limit)
+    summarize=True,         # cada ramo resume a própria saída antes do join
+)
+```
+
+- **`on_error="skip"`**: o ramo que falhar fica ausente do join (string vazia no
+  contexto) e vai para `GraphResult.failures` (`{ramo: erro}`). O fan-out entrega o
+  parcial em vez de perder o trabalho já pago dos outros ramos. Com `"raise"`
+  (padrão) a primeira exceção derruba o run.
+- **`max_concurrency=N`**: semáforo — no máximo N ramos rodam ao mesmo tempo.
+- **`summarize`**: `True` (instrução padrão) ou uma instrução `str`. Corta o input
+  do join (que lê todos os ramos e cresce O(N)); a chamada de resumo entra no
+  `usage`/`cost`.
+
+`GraphResult` também expõe **`durations`** (`{nó/ramo: segundos}`) — dá para medir
+`max(ramos)` vs `t_join` diretamente, o diagnóstico que importa num fan-out.
+
 ## Custo agregado
 
 `FlowResult` e `GraphResult` somam `usage` e `cost` de todas as etapas — útil

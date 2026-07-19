@@ -137,7 +137,8 @@ agente = Agent(llm, role="Suporte", memory=RAGMemory(rag, k=3))
 
 ### Sequencial (handoff)
 
-Cada agente roda em ordem e recebe a saída do anterior como contexto:
+Cada agente roda em ordem e recebe, por padrão, **apenas a saída do agente
+anterior** como contexto (não o transcript acumulado):
 
 ```python
 from jangada_ai import LLM, Agent, Squad
@@ -151,6 +152,21 @@ res = squad.run("Escreva um parágrafo sobre jangadas nordestinas.")
 print(res.text)            # saída do último agente
 print(res.outputs)         # {"Pesquisador": "...", "Escritor": "..."}
 ```
+
+**Semântica do contexto** (`context=`):
+
+- **`"last"`** (padrão): cada agente recebe só a saída imediatamente anterior. O
+  input por salto é ~constante — o custo da cadeia cresce **O(N)**, não O(N²).
+- **`"full"`**: cada agente recebe o **transcript acumulado** (todas as saídas
+  anteriores, rotuladas por papel). Mais contexto, custo **O(N²)** em cadeias longas.
+
+```python
+Squad([pesquisador, escritor], context="full")   # transcript inteiro a cada salto
+```
+
+**Observabilidade por agente**: `res.steps` traz uma entrada por agente com
+`(role, usage, cost, cost_complete, dt)` — dá para ver o input/custo/latência
+crescer (ou não) a cada salto sem desmontar o `Squad` na mão.
 
 ### Hierárquico (delegação)
 
