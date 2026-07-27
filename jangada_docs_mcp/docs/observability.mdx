@@ -46,6 +46,29 @@ A flag precisa ser "truthy" (`1`/`true`/`yes`/`on`/`sim`) **e** o token presente
 faltando qualquer um, o modo fica desligado e nada é enviado (custo zero). Falhas
 de rede nunca derrubam a aplicação — o envio é best-effort numa thread daemon.
 
+## Encerramento (não perca o último trace)
+
+Como o envio roda numa thread daemon, um **script que termina logo após a última
+chamada** correria o risco de perder esse último trace: o interpretador mata as
+threads daemon ao sair e o POST morreria no meio. Para evitar isso, a jangada
+registra automaticamente um handler de `atexit` que **espera os envios pendentes**
+terminarem antes de encerrar (com um prazo total de segurança — não trava o
+processo se a rede estiver lenta). Você não precisa fazer nada.
+
+A única exceção é o encerramento **abrupto** (`os._exit()`, um `signal` que não
+passa pelo `atexit`, ou um `sys.exit()` em contexto que ignora handlers): aí,
+chame o flush manualmente antes de sair.
+
+```python
+from jangada_ai import LLM, flush_observability
+
+llm = LLM("openai", "gpt-4o-mini")
+resp = llm.complete("última pergunta")
+
+flush_observability()   # garante que o trace acima foi enviado
+# ... encerramento abrupto ...
+```
+
 ## Agrupar por lote
 
 Por padrão cada chamada vira um trace próprio. Para agrupar várias chamadas de

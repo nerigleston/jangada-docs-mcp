@@ -46,6 +46,29 @@ The flag must be "truthy" (`1`/`true`/`yes`/`on`) **and** the token present; if
 either is missing, the mode stays off and nothing is sent (zero cost). Network
 failures never bring your app down — sending is best-effort on a daemon thread.
 
+## Shutdown (don't lose the last trace)
+
+Since sending runs on a daemon thread, a **script that ends right after its last
+call** would risk losing that last trace: the interpreter kills daemon threads on
+exit and the POST would die mid-flight. To prevent this, jangada automatically
+registers an `atexit` handler that **waits for pending sends** to finish before
+shutting down (with a total safety deadline — it won't hang the process if the
+network is slow). You don't have to do anything.
+
+The only exception is an **abrupt** shutdown (`os._exit()`, a `signal` that
+bypasses `atexit`, or a `sys.exit()` in a context that ignores handlers): then
+call the flush manually before exiting.
+
+```python
+from jangada_ai import LLM, flush_observability
+
+llm = LLM("openai", "gpt-4o-mini")
+resp = llm.complete("last question")
+
+flush_observability()   # ensures the trace above was sent
+# ... abrupt shutdown ...
+```
+
 ## Grouping into a batch
 
 By default each call becomes its own trace. To group several calls of one request
