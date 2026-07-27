@@ -71,10 +71,13 @@ flush_observability()   # ensures the trace above was sent
 
 ## Grouping into a batch
 
-By default each call becomes its own trace. To group several calls of one request
-into the **same batch** (even when sent one at a time), open a scope with
-`observability_session`: a batch id is generated and every call inside shares it —
-the backend groups them into the same trace.
+By default each call becomes its own trace, **named after the method** that
+produced it (`complete`, `parse`, `stream`, `embed`…) — so it never shows up as
+"(no name)" in the dashboard. To group several calls of one request into the
+**same batch** (even when sent one at a time) and give it its own name, open a
+scope with `observability_session(name=...)`: a batch id is generated, every call
+inside shares it and the scope name takes precedence — the backend groups them
+into the same trace.
 
 ```python
 from jangada_ai import LLM, observability_session
