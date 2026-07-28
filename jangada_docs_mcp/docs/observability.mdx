@@ -71,13 +71,16 @@ flush_observability()   # garante que o trace acima foi enviado
 
 ## Agrupar por lote
 
-Por padrão cada chamada vira um trace próprio, **nomeado pelo método** que a
-gerou (`complete`, `parse`, `stream`, `embed`…) — assim ele nunca aparece como
-"(sem nome)" no dashboard. Para agrupar várias chamadas de uma request no
-**mesmo lote** (mesmo sendo enviadas uma a uma) e dar a ele um nome próprio, abra
-um escopo com `observability_session(name=...)`: um id de lote é gerado, todas as
-chamadas de dentro o compartilham e o nome do escopo prevalece — o backend as
-agrupa no mesmo trace.
+Por padrão cada chamada vira um trace próprio, **nomeado pelo script de entrada**
+que a gerou (ex.: `python examples/02_multi.py` → `02_multi`) — assim scripts
+diferentes ficam distinguíveis no dashboard, em vez de uma parede de traces
+iguais. Fora de um script nomeável (REPL, `-c`, `-m`, runners), o nome recua para
+o **método** (`complete`, `parse`, `stream`, `embed`…); em nenhum caso aparece
+"(sem nome)". Para agrupar várias chamadas de uma request no **mesmo lote** (mesmo
+sendo enviadas uma a uma) e dar a ele um nome próprio, abra um escopo com
+`observability_session(name=...)`: um id de lote é gerado, todas as chamadas de
+dentro o compartilham e o nome do escopo prevalece — o backend as agrupa no mesmo
+trace.
 
 ```python
 from jangada_ai import LLM, observability_session
@@ -124,6 +127,14 @@ De cada chamada: `provider`, `model`, `promptTokens`/`completionTokens` (de
 embedding; conteúdos muito longos são truncados), o **output** (texto da resposta,
 ou quantidade/dimensão dos embeddings) e as **tool calls** que o modelo pediu
 (`tools`: id/name/args).
+
+O **input** preserva o histórico de ferramentas de forma auditável: cada
+`tool_call` registra o **nome e os argumentos** (`[tool_call consultar_estoque
+{"produto": "cabo HDMI"}]`) e cada `tool_result` registra o **conteúdo retornado**
+(`[tool_result] {"disponivel": 0, "previsao_dias": 12}`), com marcação de erro
+quando aplicável. Assim dá para conferir de onde saiu cada número que o modelo
+afirmou — não fica só um marcador vazio. Args e resultados individualmente grandes
+são truncados (teto por parte), além do teto global do input.
 
 Cada observation tem um **status**: `OK`, ou **`INCOMPLETE`** quando a resposta
 foi cortada por limite de tokens (`finish_reason == "length"`), junto do motivo

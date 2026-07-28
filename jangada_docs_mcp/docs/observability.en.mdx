@@ -71,13 +71,16 @@ flush_observability()   # ensures the trace above was sent
 
 ## Grouping into a batch
 
-By default each call becomes its own trace, **named after the method** that
-produced it (`complete`, `parse`, `stream`, `embed`…) — so it never shows up as
-"(no name)" in the dashboard. To group several calls of one request into the
-**same batch** (even when sent one at a time) and give it its own name, open a
-scope with `observability_session(name=...)`: a batch id is generated, every call
-inside shares it and the scope name takes precedence — the backend groups them
-into the same trace.
+By default each call becomes its own trace, **named after the entry script** that
+produced it (e.g. `python examples/02_multi.py` → `02_multi`) — so different
+scripts stay distinguishable in the dashboard instead of a wall of identical
+traces. Outside a nameable script (REPL, `-c`, `-m`, runners) the name falls back
+to the **method** (`complete`, `parse`, `stream`, `embed`…); it never shows up as
+"(no name)". To group several calls of one request into the **same batch** (even
+when sent one at a time) and give it its own name, open a scope with
+`observability_session(name=...)`: a batch id is generated, every call inside
+shares it and the scope name takes precedence — the backend groups them into the
+same trace.
 
 ```python
 from jangada_ai import LLM, observability_session
@@ -123,6 +126,14 @@ From each call: `provider`, `model`, `promptTokens`/`completionTokens` (from
 `usage`), `costUsd` (from `cost`), latency, the **input** (messages or embedding
 texts; very long content is truncated), the **output** (response text, or vector
 count/dimensions), and the **tool calls** the model requested (`tools`: id/name/args).
+
+The **input** keeps the tool history auditable: each `tool_call` records its
+**name and arguments** (`[tool_call consultar_estoque {"produto": "cabo HDMI"}]`)
+and each `tool_result` records the **returned content** (`[tool_result]
+{"disponivel": 0, "previsao_dias": 12}`), flagged as an error when applicable.
+That lets you check where every number the model stated came from — not just an
+empty marker. Individually large args and results are truncated (per-part cap), on
+top of the global input cap.
 
 Each observation has a **status**: `OK`, or **`INCOMPLETE`** when the response was
 cut off by the token limit (`finish_reason == "length"`), along with the
