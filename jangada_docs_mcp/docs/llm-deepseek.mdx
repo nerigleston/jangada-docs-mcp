@@ -1,0 +1,87 @@
+---
+title: "DeepSeek"
+description: "Provider deepseek. Adapter sobre o SDK openai apontando para o base_url do DeepSeek — mesma receita do OpenRouter. Modo thinking via extra=, sem JSON Schema estrito, sem MCP server-side, sem transcrição."
+---
+
+Provider `deepseek`. Adapter sobre o SDK `openai` apontando para o `base_url`
+próprio do [DeepSeek](https://api-docs.deepseek.com) — mesma receita do
+[OpenRouter](/docs/llm-openrouter): fala o dialeto `chat.completions`, só troca
+a URL e a chave.
+
+```bash
+pip install "jangada-ai[openai]"   # usa o próprio SDK da OpenAI
+```
+
+- **`provider=`**: `"deepseek"`
+- **Variável de ambiente**: `DEEPSEEK_API_KEY`
+
+```python
+from jangada_ai import LLM
+
+llm = LLM("deepseek", "deepseek-v4-flash")   # rápido/barato
+print(llm.complete("Olá!").text)
+```
+
+## Modelos
+
+- **`deepseek-v4-flash`** — rápido e barato, uso geral.
+- **`deepseek-v4-pro`** — modelo de raciocínio (thinking mode), mais caro.
+- **`deepseek-v4-flash-vision-exp`** — vision, experimental.
+
+## O que faz
+
+- **Texto** e **streaming**.
+- **Vision** (`images=`, só `deepseek-v4-flash-vision-exp`): imagens viram
+  `image_url` com data URI, mesmo caminho dos outros providers OpenAI-compatíveis.
+- **Tools / function calling**: formato OpenAI padrão.
+- **Documentos** (`files=`): extração de texto local.
+- **Structured output** (`parse`): **sem** JSON Schema estrito — a doc do
+  DeepSeek é explícita ("does not offer a schema-based mode"). O adapter vai
+  direto para **JSON Object mode** (schema injetado como instrução de sistema),
+  sem tentar `json_schema` antes (diferente do fallback do Groq/OpenRouter, que
+  tentam json_schema primeiro). Por isso `supports_parse_helper = False`.
+
+## Modo `thinking` (raciocínio)
+
+`deepseek-v4-pro` e `deepseek-v4-flash` suportam um modo de raciocínio
+explícito. É um campo **fora do schema típado do SDK oficial da OpenAI** — sem
+tratamento especial, `client.chat.completions.create(thinking=...)` levantaria
+`TypeError`. O adapter da jangada resolve isso: passe `thinking` normalmente
+via `extra=` e ele empacota em `extra_body` por baixo dos panos.
+
+```python
+llm = LLM("deepseek", "deepseek-v4-pro")
+comp = llm.complete(
+    "Resolva: se 3 maçãs custam R$ 6, quanto custam 7?",
+    extra={"thinking": {"type": "enabled", "reasoning_effort": "high"}},  # low/high/max
+)
+```
+
+⚠️ Nesse modo a API **rejeita** `temperature`/`top_p`/`presence_penalty`/
+`frequency_penalty` — não passe esses params junto com `thinking` habilitado.
+
+A resposta crua (`comp.raw`) traz o campo não-padrão `reasoning_content` (o
+"pensamento" do modelo, separado do `content` final) quando o modo está ativo —
+acesse via `comp.raw.choices[0].message.reasoning_content` se precisar.
+
+## O que NÃO suporta
+
+- **MCP server-side** (`mcp_servers=`): a Responses API do DeepSeek só tem
+  `function`/`web_search` — levanta `UnsupportedError`.
+- **Transcrição de áudio** (`transcribe`): sem endpoint documentado — levanta
+  `UnsupportedError`.
+- **Embeddings** (`embed`): sem endpoint documentado.
+
+## Preço e cache
+
+O DeepSeek tem preço diferenciado por **horário** (pico/fora de pico, UTC) e
+por **cache hit/miss** no prompt. A tabela de preços da jangada usa um valor
+aproximado único por modelo — não modela essas variações. Para custo exato,
+confira `comp.raw.usage` (`prompt_cache_hit_tokens`/`prompt_cache_miss_tokens`).
+
+## Quando escolher DeepSeek
+
+Custo muito baixo por token e um modo de raciocínio explícito (`deepseek-v4-pro`)
+competitivo com os modelos "thinking" dos providers maiores. Bom candidato a
+**fallback** barato ou a rodar tarefas de raciocínio em lote. Veja
+[Retry e fallback](/docs/retry-fallback).

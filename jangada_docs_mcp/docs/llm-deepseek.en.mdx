@@ -1,0 +1,89 @@
+---
+title: "DeepSeek"
+description: "Provider deepseek. Adapter over the openai SDK pointing at DeepSeek's base_url — same recipe as OpenRouter. Thinking mode via extra=, no strict JSON Schema, no server-side MCP, no transcription."
+---
+
+Provider `deepseek`. Adapter over the `openai` SDK pointing at
+[DeepSeek](https://api-docs.deepseek.com)'s own `base_url` — the same recipe as
+[OpenRouter](/en/docs/llm-openrouter): speaks the `chat.completions` dialect,
+only the URL and key change.
+
+```bash
+pip install "jangada-ai[openai]"   # uses the OpenAI SDK itself
+```
+
+- **`provider=`**: `"deepseek"`
+- **Environment variable**: `DEEPSEEK_API_KEY`
+
+```python
+from jangada_ai import LLM
+
+llm = LLM("deepseek", "deepseek-v4-flash")   # fast/cheap
+print(llm.complete("Hello!").text)
+```
+
+## Models
+
+- **`deepseek-v4-flash`** — fast and cheap, general purpose.
+- **`deepseek-v4-pro`** — reasoning model (thinking mode), pricier.
+- **`deepseek-v4-flash-vision-exp`** — vision, experimental.
+
+## What it does
+
+- **Text** and **streaming**.
+- **Vision** (`images=`, `deepseek-v4-flash-vision-exp` only): images become
+  `image_url` with a data URI, same path as the other OpenAI-compatible
+  providers.
+- **Tools / function calling**: standard OpenAI format.
+- **Documents** (`files=`): local text extraction.
+- **Structured output** (`parse`): **no** strict JSON Schema — DeepSeek's docs
+  are explicit ("does not offer a schema-based mode"). The adapter goes
+  straight to **JSON Object mode** (schema injected as a system instruction),
+  without trying `json_schema` first (unlike Groq/OpenRouter's fallback, which
+  tries json_schema first). Hence `supports_parse_helper = False`.
+
+## `thinking` mode (reasoning)
+
+`deepseek-v4-pro` and `deepseek-v4-flash` support an explicit reasoning mode.
+It's a field **outside the OpenAI SDK's typed schema** — without special
+handling, `client.chat.completions.create(thinking=...)` would raise
+`TypeError`. jangada's adapter handles this: pass `thinking` normally via
+`extra=` and it gets packed into `extra_body` under the hood.
+
+```python
+llm = LLM("deepseek", "deepseek-v4-pro")
+comp = llm.complete(
+    "Solve: if 3 apples cost $6, how much do 7 cost?",
+    extra={"thinking": {"type": "enabled", "reasoning_effort": "high"}},  # low/high/max
+)
+```
+
+⚠️ In this mode the API **rejects** `temperature`/`top_p`/`presence_penalty`/
+`frequency_penalty` — don't pass those params alongside `thinking`.
+
+The raw response (`comp.raw`) carries the non-standard `reasoning_content`
+field (the model's "thought", separate from the final `content`) when the mode
+is active — access it via
+`comp.raw.choices[0].message.reasoning_content` if you need it.
+
+## What it does NOT support
+
+- **Server-side MCP** (`mcp_servers=`): DeepSeek's Responses API only has
+  `function`/`web_search` — raises `UnsupportedError`.
+- **Audio transcription** (`transcribe`): no documented endpoint — raises
+  `UnsupportedError`.
+- **Embeddings** (`embed`): no documented endpoint.
+
+## Pricing and caching
+
+DeepSeek prices differently by **time of day** (peak/off-peak, UTC) and by
+**prompt cache hit/miss**. jangada's price table uses a single approximate
+value per model — it doesn't model these variations. For exact cost, check
+`comp.raw.usage` (`prompt_cache_hit_tokens`/`prompt_cache_miss_tokens`).
+
+## When to choose DeepSeek
+
+Very low cost per token and an explicit reasoning mode (`deepseek-v4-pro`)
+competitive with larger providers' "thinking" models. A good candidate for a
+cheap **fallback** or for running batch reasoning tasks. See
+[Retry and fallback](/en/docs/retry-fallback).

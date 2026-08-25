@@ -14,6 +14,7 @@ the normalized types (`Message`/`Completion`) to the native SDK.
 | Gemini      | `gemini`     | `GEMINI_API_KEY`     | `jangada-ai[gemini]`        |
 | Mistral     | `mistral`    | `MISTRAL_API_KEY`    | `jangada-ai[mistral]`       |
 | OpenRouter  | `openrouter` | `OPENROUTER_API_KEY` | `jangada-ai[openai]`        |
+| DeepSeek    | `deepseek`   | `DEEPSEEK_API_KEY`   | `jangada-ai[openai]`        |
 | AWS Bedrock | `bedrock`    | AWS credentials (`AWS_ACCESS_KEY_ID`…) | `jangada-ai[bedrock]`  |
 | Azure OpenAI| `azure`      | `AZURE_OPENAI_API_KEY` + `AZURE_OPENAI_ENDPOINT` | `jangada-ai[openai]` |
 | Vertex AI   | `vertex`     | `GOOGLE_CLOUD_PROJECT` + ADC | `jangada-ai[gemini]`      |
@@ -55,6 +56,31 @@ transcription** (`openai/whisper-*`, `openai/gpt-4o-transcribe`) and **embedding
 feature is **server-side MCP** (it relies on the Responses API, which OpenRouter
 does not expose — raises `UnsupportedError`).
 
+## DeepSeek (reasoning + thinking mode)
+
+[DeepSeek](https://api-docs.deepseek.com) also speaks `chat.completions` on its
+own `base_url` — the same recipe as OpenRouter, reusing the `openai` SDK:
+
+```python
+LLM("deepseek", "deepseek-v4-flash")   # fast/cheap
+LLM("deepseek", "deepseek-v4-pro")     # reasoning (thinking mode)
+```
+
+`thinking` mode is a field outside the OpenAI SDK's typed schema — pass it via
+`extra=` and the adapter packs it into `extra_body` under the hood:
+
+```python
+LLM("deepseek", "deepseek-v4-pro", extra={
+    "thinking": {"type": "enabled", "reasoning_effort": "high"},  # low/high/max
+})
+```
+
+Supports text, streaming, vision (`deepseek-v4-flash-vision-exp`) and
+tools/function calling. Does **not** support strict JSON Schema (`parse` goes
+straight to JSON Object mode), server-side MCP, or audio transcription — all
+three raise `UnsupportedError`. See [DeepSeek](/en/docs/llm-deepseek) for
+details.
+
 ## Key resolution
 
 ```python
@@ -73,6 +99,7 @@ The `.env` is detected non-destructively at import time (disable it with
 - **Gemini**: `config.response_schema=Modelo` → `resp.parsed`
 - **Anthropic**: tool-forcing (`tool_choice` fixed) → validates `tool_use.input`
 - **OpenRouter**: same as Groq (json_schema with fallback to JSON Object mode)
+- **DeepSeek**: no json_schema — goes straight to JSON Object mode
 
 See [Structured output](/en/docs/structured-output) for the uniform usage.
 

@@ -15,6 +15,7 @@
     "llm-gemini",
     "llm-mistral",
     "llm-openrouter",
+    "llm-deepseek",
     "llm-bedrock",
     "llm-azure",
     "llm-vertex",
