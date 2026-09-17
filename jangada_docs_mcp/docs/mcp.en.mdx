@@ -172,7 +172,9 @@ tools = await mcp.list_tools()   # connects on its own here
 > Safe for concurrent use: if several calls notice the connection dropped at
 > the same time, only the first one actually reconnects — the others wait and
 > reuse the fresh session, instead of racing each other into separate
-> reconnects.
+> reconnects. If the reconnect itself fails (server down), the calls that were
+> waiting reuse that SAME error for a short cooldown, instead of each one
+> waiting out its own connection timeout from scratch.
 
 ## Full MCP primitives (in `MCPClient`)
 
@@ -247,8 +249,8 @@ async with MCPClient("https://my-mcp/mcp/") as mcp:
 - `allowed_tools=` filters by name before the model sees the tools (also
   available directly as `mcp_tools(client, allowed_tools=[...])`).
 - `tools=` skips `list_tools()` (and its round-trip) when you already listed
-  them before — list once and reuse across calls; `allowed_tools=` is ignored
-  when `tools=` is also passed.
+  them before — list once and reuse across calls; `allowed_tools=` still
+  applies on top of `tools=` (filters the already-built list).
 - `on_tool_call(call)`/`on_tool_result(call, result)` (sync or async) run on
   every tool call; `on_tool_call` returning `False` **vetoes** the call.
 - The returned `Completion` gains extra attributes (`usage`/`cost` remain only
