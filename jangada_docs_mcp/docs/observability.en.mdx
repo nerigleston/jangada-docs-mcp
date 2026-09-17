@@ -129,8 +129,7 @@ count/dimensions), and the **tool calls** the model requested (`tools`: id/name/
 
 The **input** keeps the tool history auditable: each `tool_call` records its
 **name and arguments** (`[tool_call consultar_estoque {"produto": "cabo HDMI"}]`)
-and each `tool_result` records the **returned content** (`[tool_result]
-{"disponivel": 0, "previsao_dias": 12}`), flagged as an error when applicable.
+and each `tool_result` records the **returned content** (`[tool_result] {"disponivel": 0, "previsao_dias": 12}`), flagged as an error when applicable.
 That lets you check where every number the model stated came from — not just an
 empty marker. Individually large args and results are truncated (per-part cap), on
 top of the global input cap.

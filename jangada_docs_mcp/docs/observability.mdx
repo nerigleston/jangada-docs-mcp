@@ -129,8 +129,7 @@ ou quantidade/dimensão dos embeddings) e as **tool calls** que o modelo pediu
 (`tools`: id/name/args).
 
 O **input** preserva o histórico de ferramentas de forma auditável: cada
-`tool_call` registra o **nome e os argumentos** (`[tool_call consultar_estoque
-{"produto": "cabo HDMI"}]`) e cada `tool_result` registra o **conteúdo retornado**
+`tool_call` registra o **nome e os argumentos** (`[tool_call consultar_estoque {"produto": "cabo HDMI"}]`) e cada `tool_result` registra o **conteúdo retornado**
 (`[tool_result] {"disponivel": 0, "previsao_dias": 12}`), com marcação de erro
 quando aplicável. Assim dá para conferir de onde saiu cada número que o modelo
 afirmou — não fica só um marcador vazio. Args e resultados individualmente grandes

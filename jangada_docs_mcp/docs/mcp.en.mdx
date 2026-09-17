@@ -41,7 +41,29 @@ print(comp.text)   # the provider already executed the MCP tools
 
 ## Client-side (Gemini, async)
 
-The MCP session is asynchronous, so use **`acomplete`**:
+In Gemini, `MCPServer(url=...)` also works — but only in **`acomplete`**: jangada
+opens its own `MCPClient` under the hood and hands it to the SDK as a
+client-side session (it's the only way Gemini supports it). Requires the
+`[mcp]` extra.
+
+```python
+from jangada_ai import LLM, MCPServer
+
+llm = LLM("gemini", "gemini-2.5-flash")
+comp = await llm.acomplete(
+    "List the open issues.",
+    mcp_servers=[MCPServer(url="https://mcp.example.com/mcp/", name="github",
+                           authorization_token="TOKEN")],
+)
+```
+
+> In `complete()` (sync) this still raises `UnsupportedError` — Gemini has no
+> way to open an async session outside of `acomplete`. `MCPServer`'s
+> `allowed_tools` is **not** honored on this path yet (Gemini's SDK lists the
+> tools on its own, with no filter hook) — to restrict tools on Gemini, use
+> jangada's own `MCPClient`/`run_agent` (below), which has `allowed_tools=`.
+
+The MCP session is asynchronous (built manually), so use **`acomplete`**:
 
 ```python
 from mcp import ClientSession
@@ -59,8 +81,7 @@ async with stdio_client(params) as (read, write):
 ```
 
 > In Gemini, `complete()` (sync) with a session raises `UnsupportedError` asking for
-> `acomplete()`. Passing an `MCPServer(url=...)` in Gemini also raises — it is
-> client-side. And passing a session in Anthropic/OpenAI/Groq raises — they are
+> `acomplete()`. And passing a session in Anthropic/OpenAI/Groq raises — they are
 > remote by URL.
 
 ## Built-in MCP client + agent (portable, any provider)
@@ -89,6 +110,61 @@ Under the hood: `await mcp.list_tools()` becomes `tools=[...]`, and each `tool_c
 the model is executed with `await mcp.call_tool(...)` and resent via
 `Message.tool_results(...)` — the same [tool calling](/en/docs/tools) as always, on
 autopilot. Want full control? Use `MCPClient` + `tools=` by hand.
+
+- **`isError` from the tool result** becomes `is_error=True` in the
+  `tool_result` — the model knows the tool failed (unlike a network/protocol
+  exception, which already became an error before).
+- **`list_tools`/`list_resources`/`list_prompts`** follow `nextCursor` on
+  their own until pages run out — servers with many tools don't come back
+  incomplete (and it stops if a buggy server repeats the same cursor, instead
+  of looping forever).
+- **Iteration limit**: if `run_agent` hits `max_iterations` with `tool_calls`
+  still pending, it emits a `UserWarning` (the returned `Completion` is not
+  necessarily the final answer). In `Agent.run`/`arun` (below), the same case
+  also sets `AgentResult.stopped_by_limit = True`.
+- **Connection error** (`MCPClient.__aenter__`, e.g. invalid token, server
+  down) becomes the library's own `APIConnectionError` with the real cause
+  (e.g. `HTTP 403`/`HTTP 400`), instead of the raw transport error
+  (`ExceptionGroup`/`CancelledError` from `anyio`) — even when the real cause
+  only surfaces when closing the connection, not on opening it.
+
+### Transport, authentication and timeout
+
+```python
+async with MCPClient(
+    "https://my-mcp/sse",      # URL ending in /sse -> auto-detects SSE
+    # transport="sse",         # or force it explicitly ("sse" | "streamable-http")
+    auth_token="TOKEN",        # becomes an Authorization: Bearer TOKEN header
+    timeout=30,                # seconds, forwarded to the HTTP transport
+) as mcp:
+    ...
+```
+
+### Long-lived connection (`connect`/`aclose`/`reconnect`, `keep_alive`, `ping`)
+
+Outside of `async with` — useful for opening at app startup and closing on
+shutdown:
+
+```python
+mcp = MCPClient("https://my-mcp/mcp/", auth_token="TOKEN")
+await mcp.connect()          # idempotent: calling again while connected is a no-op
+...
+await mcp.ping()             # health check (session/ping)
+...
+await mcp.reconnect()        # close and reopen (e.g. noticed the connection dropped)
+...
+await mcp.aclose()           # on shutdown
+```
+
+With `keep_alive=True`, `MCPClient` connects **on its own** on the first call
+(no need for `connect()`/`async with`) and reconnects **once**, on its own, if
+a call fails with something that looks like a dropped connection — it does not
+retry on a tool's LOGIC error (e.g. an invalid argument):
+
+```python
+mcp = MCPClient("https://my-mcp/mcp/", auth_token="TOKEN", keep_alive=True)
+tools = await mcp.list_tools()   # connects on its own here
+```
 
 ## Full MCP primitives (in `MCPClient`)
 
@@ -136,6 +212,47 @@ async with MCPClient(
 | Sampling | `sampling_llm=LLM(...)` |
 | Elicitation | `elicitation_callback=...` |
 | Logging | `logging_callback=...` / `set_logging_level(...)` |
+
+## `run_agent`: history, callbacks, allowlist and enriched return
+
+```python
+from jangada_ai.message import Message
+
+def veto_delete(call):
+    return call.name != "delete_file"   # False = vetoes the call
+
+async with MCPClient("https://my-mcp/mcp/") as mcp:
+    ans = await run_agent(
+        llm, "List and then delete the temp files", client=mcp,
+        history=[Message("user", "hi"), Message("assistant", "hello!")],  # previous turns
+        allowed_tools=["list_files", "delete_file"],  # restricts visible tools
+        on_tool_call=veto_delete,        # (sync or async) False = vetoes the call
+        on_tool_result=lambda c, r: print(c.name, r.is_error),
+    )
+    print(ans.text, ans.iterations, ans.stopped_by_limit)
+    print(ans.tool_trace)          # [{"call", "result", "is_error"}, ...] for ALL rounds
+    print(ans.usage_total, ans.cost_total, ans.cost_complete)   # aggregated over the whole loop
+```
+
+- `history=` injects previous turns before the task; `prompt=None` continues
+  from the history alone (no empty user message added).
+- `allowed_tools=` filters by name before the model sees the tools (also
+  available directly as `mcp_tools(client, allowed_tools=[...])`).
+- `on_tool_call(call)`/`on_tool_result(call, result)` (sync or async) run on
+  every tool call; `on_tool_call` returning `False` **vetoes** the call.
+- The returned `Completion` gains extra attributes (`usage`/`cost` remain only
+  the LAST call to the LLM, as always):
+
+| Extra attribute | What |
+|---|---|
+| `tool_trace` | list of `{"call", "result", "is_error"}` for ALL tool calls in the loop |
+| `iterations` | how many rounds the loop took |
+| `stopped_by_limit` | `True` if it stopped by hitting `max_iterations` |
+| `usage_total`/`cost_total`/`cost_complete` | aggregated over ALL calls to the LLM in the loop |
+
+In [`Agent`/`Squad`](/en/docs/agents), the same shows up as
+`mcp_allowed_tools=`, `on_tool_call=`/`on_tool_result=` in the constructor, and
+`AgentResult.tool_trace`.
 
 ## Be an MCP server (expose your tools/Agent)
 

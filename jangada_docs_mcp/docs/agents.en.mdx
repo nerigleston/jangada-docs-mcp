@@ -38,11 +38,22 @@ print(res.cost, res.usage, res.iterations)
   `run` (sync) use sync tools only.
 - For an **MCP** server, pass `mcp_client=MCPClient(...)` and use **`arun`**
   (async): the agent lists the server's tools and uses them alongside its own.
+  `mcp_allowed_tools=[...]` restricts which MCP tools are visible.
+- **`AgentResult.stopped_by_limit`**: `True` when the loop stopped by hitting
+  `max_iterations` with `tool_calls` still pending — in that case `text`/
+  `messages` are NOT the model's final answer (a `UserWarning` is also
+  emitted). `False` when the model stopped requesting tools on its own.
+- **`on_tool_call`/`on_tool_result`**: callbacks (sync in `run`; sync or async
+  in `arun`) that run on every tool call (function or MCP). `on_tool_call`
+  returning `False` **vetoes** the call. `AgentResult.tool_trace` carries
+  `{"call", "result", "is_error"}` for every call in the turn.
 
 ```python
 async with MCPClient("https://your-mcp/mcp/") as mcp:
-    agent = Agent(llm, role="Operator", mcp_client=mcp)
-    print((await agent.arun("List the products")).text)
+    agent = Agent(llm, role="Operator", mcp_client=mcp, mcp_allowed_tools=["list_products"],
+                  on_tool_call=lambda c: print("calling", c.name))
+    res = await agent.arun("List the products")
+    print(res.text, res.tool_trace)
 ```
 
 ## Multi-turn conversation (`history=`)
