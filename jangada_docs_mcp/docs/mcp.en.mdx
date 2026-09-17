@@ -117,8 +117,10 @@ autopilot. Want full control? Use `MCPClient` + `tools=` by hand.
   exception, which already became an error before).
 - **`list_tools`/`list_resources`/`list_prompts`** follow `nextCursor` on
   their own until pages run out — servers with many tools don't come back
-  incomplete (and it stops if a buggy server repeats the same cursor, instead
-  of looping forever).
+  incomplete. It stops if a buggy server repeats the same cursor, and has a
+  defensive limit of 10,000 pages for cursors that never repeat but also never
+  run out — hitting that limit without exhausting the cursor emits a
+  `UserWarning` (the list may be incomplete; it never truncates silently).
 - **Iteration limit**: if `run_agent` hits `max_iterations` with `tool_calls`
   still pending, it emits a `UserWarning` (the returned `Completion` is not
   necessarily the final answer). In `Agent.run`/`arun` (below), the same case
@@ -166,6 +168,11 @@ retry on a tool's LOGIC error (e.g. an invalid argument):
 mcp = MCPClient("https://my-mcp/mcp/", auth_token="TOKEN", keep_alive=True)
 tools = await mcp.list_tools()   # connects on its own here
 ```
+
+> Safe for concurrent use: if several calls notice the connection dropped at
+> the same time, only the first one actually reconnects — the others wait and
+> reuse the fresh session, instead of racing each other into separate
+> reconnects.
 
 ## Full MCP primitives (in `MCPClient`)
 
@@ -239,6 +246,9 @@ async with MCPClient("https://my-mcp/mcp/") as mcp:
   from the history alone (no empty user message added).
 - `allowed_tools=` filters by name before the model sees the tools (also
   available directly as `mcp_tools(client, allowed_tools=[...])`).
+- `tools=` skips `list_tools()` (and its round-trip) when you already listed
+  them before — list once and reuse across calls; `allowed_tools=` is ignored
+  when `tools=` is also passed.
 - `on_tool_call(call)`/`on_tool_result(call, result)` (sync or async) run on
   every tool call; `on_tool_call` returning `False` **vetoes** the call.
 - The returned `Completion` gains extra attributes (`usage`/`cost` remain only

@@ -39,6 +39,8 @@ print(res.cost, res.usage, res.iterations)
 - For an **MCP** server, pass `mcp_client=MCPClient(...)` and use **`arun`**
   (async): the agent lists the server's tools and uses them alongside its own.
   `mcp_allowed_tools=[...]` restricts which MCP tools are visible.
+  `mcp_tools_cache=[...]` skips `list_tools()` on every `arun` call — list once
+  with `await mcp_tools(mcp_client)` and pass it here.
 - **`AgentResult.stopped_by_limit`**: `True` when the loop stopped by hitting
   `max_iterations` with `tool_calls` still pending — in that case `text`/
   `messages` are NOT the model's final answer (a `UserWarning` is also

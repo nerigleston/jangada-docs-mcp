@@ -117,8 +117,10 @@ automático. Quer controle total? Use `MCPClient` + `tools=` na mão.
   que já virava erro antes).
 - **`list_tools`/`list_resources`/`list_prompts`** seguem o `nextCursor`
   sozinhos até esgotar as páginas — servidores com muitas tools não ficam
-  incompletos (e param se um servidor com bug repetir o mesmo cursor, em vez
-  de travar num loop infinito).
+  incompletos. Param se um servidor com bug repetir o mesmo cursor, e têm um
+  limite defensivo de 10.000 páginas para cursores que nunca se repetem mas
+  também nunca esgotam — batendo nesse limite sem esgotar o cursor emite um
+  `UserWarning` (a lista pode estar incompleta; nunca trunca em silêncio).
 - **Limite de iterações**: se `run_agent` bater em `max_iterations` com
   `tool_calls` ainda pendentes, ele emite um `UserWarning` (`Completion`
   devolvido não é necessariamente a resposta final). No `Agent.run`/`arun`
@@ -166,6 +168,11 @@ LÓGICA da tool (ex.: argumento inválido):
 mcp = MCPClient("https://meu-mcp/mcp/", auth_token="TOKEN", keep_alive=True)
 tools = await mcp.list_tools()   # conecta sozinho aqui
 ```
+
+> Seguro para uso concorrente: se várias chamadas percebem a conexão caída ao
+> mesmo tempo, só a primeira reconecta de verdade — as outras esperam e
+> reaproveitam a sessão nova, em vez de disparar reconexões por cima umas das
+> outras.
 
 ## Primitivos completos do MCP (no `MCPClient`)
 
@@ -239,6 +246,9 @@ async with MCPClient("https://meu-mcp/mcp/") as mcp:
   só do histórico (sem adicionar mensagem de usuário vazia).
 - `allowed_tools=` filtra pelo nome antes do modelo ver as tools (também
   disponível em `mcp_tools(client, allowed_tools=[...])` direto).
+- `tools=` pula o `list_tools()` (e o round-trip) quando você já listou antes
+  — liste uma vez e reuse entre chamadas; `allowed_tools=` é ignorado quando
+  `tools=` também é passado.
 - `on_tool_call(call)`/`on_tool_result(call, result)` (sync ou async) correm a
   cada tool call; `on_tool_call` devolvendo `False` **veta** a chamada.
 - O `Completion` devolvido ganha atributos extras (`usage`/`cost` continuam
