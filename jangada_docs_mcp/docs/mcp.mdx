@@ -57,10 +57,12 @@ comp = await llm.acomplete(
 ```
 
 > No `complete()` (sync) isso continua levantando `UnsupportedError` — o Gemini
-> não tem como abrir uma sessão assíncrona fora de `acomplete`. `allowed_tools`
-> do `MCPServer` ainda **não** é respeitado nesse caminho (o SDK do Gemini lista
-> as tools sozinho, sem hook de filtro) — para restringir tools no Gemini, use
-> o `MCPClient`/`run_agent` próprio da jangada (abaixo), que tem `allowed_tools=`.
+> não tem como abrir uma sessão assíncrona fora de `acomplete`. `allowed_tools`/
+> `require_approval` do `MCPServer` também levantam `UnsupportedError` nesse
+> caminho (em vez de serem ignorados em silêncio) — o SDK do Gemini lista e
+> executa as tools sozinho, sem hook de filtro/aprovação; para restringir tools
+> no Gemini, use o `MCPClient`/`run_agent` próprio da jangada (abaixo), que tem
+> `allowed_tools=`.
 
 A sessão MCP é assíncrona (montada manualmente), então use **`acomplete`**:
 

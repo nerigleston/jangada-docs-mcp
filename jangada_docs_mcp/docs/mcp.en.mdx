@@ -59,8 +59,9 @@ comp = await llm.acomplete(
 
 > In `complete()` (sync) this still raises `UnsupportedError` — Gemini has no
 > way to open an async session outside of `acomplete`. `MCPServer`'s
-> `allowed_tools` is **not** honored on this path yet (Gemini's SDK lists the
-> tools on its own, with no filter hook) — to restrict tools on Gemini, use
+> `allowed_tools`/`require_approval` also raise `UnsupportedError` on this path
+> (instead of being silently ignored) — Gemini's SDK lists and runs the tools
+> on its own, with no filter/approval hook; to restrict tools on Gemini, use
 > jangada's own `MCPClient`/`run_agent` (below), which has `allowed_tools=`.
 
 The MCP session is asynchronous (built manually), so use **`acomplete`**:
