@@ -105,7 +105,7 @@ app = build_a2a_app(A2AHandler(sofia, url="https://app.exemplo/a2a"))
 
 | Rota | O quê |
 |------|-------|
-| `GET /.well-known/agent.json` | Agent Card do agente principal |
+| `GET /.well-known/agent-card.json` (e o legado `/.well-known/agent.json`) | Agent Card do agente principal |
 | `GET /agents` | catálogo (lista de Agent Cards) |
 | `POST /` | `message/send` (JSON), `message/stream` (SSE), `tasks/get`, `tasks/cancel` |
 | `POST /agents/{name}` | idem, para um agente do catálogo |
@@ -204,6 +204,59 @@ from jangada_ai import plan
 
 for tarefa in plan(llm, "Lançar uma newsletter sobre IA", max_tasks=5):
     print("-", tarefa)
+```
+
+## O que mudou na 1.9.0
+
+- **Squad hierárquico de verdade assíncrono.** No `Squad.arun`, a tool de
+  delegação é `async` e chama `await membro.arun()` — o event loop não trava e o
+  membro mantém `mcp_client` e tools async. O gerente é uma **cópia** do agente
+  original, então `on_tool_call` (veto), `on_tool_result`, MCP e memória valem
+  também no modo hierárquico.
+- **Custo e rastro dos membros.** `SquadResult.usage`/`cost` somam o gerente **e**
+  os membros delegados (`cost_complete` só é `True` se todos tiverem preço);
+  `outputs` traz a saída de cada membro e `steps` uma entrada por delegação.
+  Papéis repetidos viram chaves únicas (`Revisor`, `Revisor#2`).
+- **Nomes das tools de delegação** são transliterados (acentos saem), deduplicados
+  com sufixo (`_2`, `_3`) e truncados em 64 caracteres.
+- **`Agent.astream(prompt, chunk_size=24)`**: sem tools faz streaming real do
+  provider; com tools resolve o loop com `acomplete` e emite o texto final em
+  pedaços (sem gerar a resposta duas vezes). Ao terminar, `agent.last_stream_result`
+  traz o `AgentResult` (usage, cost, `tool_trace`, `stopped_by_limit`).
+- **Tools nativas misturadas.** `Agent(llm, tools=[web_search(), minha_funcao])`
+  funciona: a tool nativa roda no provider e aparece no `tool_trace` com
+  `"server": True` (veja [Tools nativas](/docs/native-tools)).
+- **MCP: allowlist aplicada na execução.** Uma tool MCP que não foi oferecida ao
+  modelo (fora de `mcp_allowed_tools`) **não é executada** — volta como
+  `tool_result` de erro, mesmo que o modelo invente o nome.
+- **Parâmetro `BaseModel` em tools** recebe a instância validada do modelo
+  (`jangada_ai.coerce_args`).
+- **`plan()`** levanta `ValueError` claro se a resposta vier sem `parsed`;
+  `RAGMemory` loga falhas (logger `jangada_ai`) em vez de engoli-las e não grava
+  turnos que pararam por limite.
+
+### A2A (card e servidor)
+
+`Agent.card()` segue a spec A2A ≥ 0.3: traz `protocolVersion` (padrão `"0.3.0"`) e
+`preferredTransport="JSONRPC"`, aceita `security_schemes=`/`security=`, e os
+parâmetros das tools viram `tags` (o campo `skills[].parameters`, fora da spec,
+saiu). O `A2AHandler` serve o card em **`/.well-known/agent-card.json`** (e mantém
+`/.well-known/agent.json`), limita memória com `max_tasks`/`task_ttl` e
+`max_contexts`/`context_ttl` (padrão 1000 itens / 1 h), isola `tasks/get|cancel`
+por tenant, devolve `-32002` ao cancelar task já terminada, `-32700`/`-32600`/
+`-32602` para JSON inválido/corpo inválido/pergunta vazia, e não expõe a mensagem
+da exceção no `-32603` (o detalhe vai para o log).
+
+```python
+from jangada_ai import Agent, LLM, Squad, web_search
+
+pesquisador = Agent(LLM("anthropic", "claude-sonnet-5"), role="Pesquisador",
+                    tools=[web_search(max_uses=3)])
+redator = Agent(LLM("openai", "gpt-5-mini"), role="Redator")
+gerente = Agent(LLM("openai", "gpt-5"), role="Gerente")
+
+res = await Squad([pesquisador, redator], manager=gerente).arun("Resuma as novidades do Python 3.14")
+print(res.text, res.cost, res.outputs.keys(), len(res.steps))
 ```
 
 ## Como se relaciona com o resto

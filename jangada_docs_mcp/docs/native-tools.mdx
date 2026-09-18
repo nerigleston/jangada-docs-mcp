@@ -1,0 +1,304 @@
+---
+title: "Tools nativas"
+description: "Tools server-side (web search, url context, code execution, file search, Google Maps, computer use, geração de imagem) com uma API só entre providers: web_search(), code_execution()… e native_tool() para o objeto nativo do SDK. Matriz por provider, citações, multi-turn e custo."
+---
+
+A lib trabalha com dois tipos de tool:
+
+- **Function tools** ([Tools](/docs/tools)): você declara a função, o modelo pede
+  para chamá-la e **o seu código** executa.
+- **Tools nativas** (server-side / built-in): **o provider** executa do lado
+  dele (busca na web, leitura de URL, execução de código, busca em arquivos,
+  mapas, geração de imagem). Você só liga a tool e recebe a resposta pronta, com
+  as fontes.
+
+A jangada tem **uma API só** para as tools nativas de todos os providers. Você
+escreve `web_search()` e o adapter traduz para `google_search` no Gemini,
+`web_search_20250305` na Anthropic, `{"type": "web_search"}` na Responses API da
+OpenAI, `browser_search` no Groq, plugin `web` no OpenRouter, `nova_grounding` no
+Bedrock, e assim por diante.
+
+```python
+from jangada_ai import LLM, web_search
+
+llm = LLM("gemini", "gemini-3.8-flash")
+comp = llm.complete("Qual foi a última decisão do Copom sobre a Selic?",
+                    tools=[web_search()])
+print(comp.text)
+for c in comp.citations:          # fontes normalizadas, iguais em todo provider
+    print("-", c.title, c.url)
+```
+
+Tools nativas e function tools **se misturam na mesma lista**, nos providers
+que permitem:
+
+```python
+def cotacao_interna(moeda: str) -> str:
+    "Cotação interna da empresa para uma moeda."
+    return "5,10" if moeda.upper() == "USD" else "indisponível"
+
+comp = llm.complete(
+    "Compare o dólar de hoje (busque na web) com a nossa cotação interna.",
+    tools=[web_search(), cotacao_interna],
+)
+```
+
+Se o provider não suporta uma tool (ou uma opção que **restringe** o
+comportamento, como `allowed_domains`), a chamada levanta `UnsupportedError`
+**antes** de chegar ao SDK. A lib nunca ignora em silêncio uma restrição que
+você pediu. Opções que são só dica (`max_uses`, `user_location` num provider
+que não tem esse campo) são ignoradas com log em nível debug.
+
+## API
+
+Todos os construtores estão em `jangada_ai` (e em `jangada_ai.native_tools`) e
+devolvem um `NativeTool`.
+
+| Construtor | O que faz | Opções canônicas |
+|---|---|---|
+| `web_search()` | Busca na web | `max_uses`, `allowed_domains`, `blocked_domains`, `user_location={"city","region","country","timezone"}` |
+| `web_fetch()` / `url_context()` | Lê o conteúdo de URLs citadas no prompt | `max_uses`, `allowed_domains`, `blocked_domains` |
+| `code_execution()` | Executa código no sandbox do provider | `container` (reuso), `files` (ids de arquivo, OpenAI) |
+| `file_search(stores)` | Busca em arquivos indexados no provider | `stores` (vector stores / file search stores / libraries), `top_k`, `filter` |
+| `google_maps()` | Grounding com Google Maps | `lat`, `lng`, `enable_widget` |
+| `computer_use()` | O modelo pede ações de tela; **seu código** executa | `environment`, `display_width`, `display_height` |
+| `image_generation()` | Gera imagem como tool | opções nativas via `**opts` |
+
+Todos aceitam também:
+
+- **`**opts`**: qualquer opção desconhecida vai direto para o payload nativo do
+  provider. Exemplo: `web_search(search_context_size="high")` na OpenAI.
+- **`provider_overrides={"anthropic": {...}}`**: opções aplicadas só naquele
+  provider. Útil quando o mesmo código roda com fallback entre providers.
+- **Anthropic**: `version=` escolhe a versão da server tool. Os defaults são
+  `web_search_20250305`, `web_fetch_20250910` e `code_execution_20250825`, que
+  funcionam sem *programmatic tool calling*.
+
+```python
+from jangada_ai import web_search
+
+busca = web_search(
+    max_uses=3,
+    blocked_domains=["exemplo-ruim.com"],
+    provider_overrides={"anthropic": {"version": "web_search_20260209"}},
+)
+```
+
+### `native_tool`: o objeto nativo, sem tradução
+
+Para uma opção ou versão que a camada canônica ainda não cobre, passe o objeto
+(ou dict) **do próprio SDK** com `native_tool(provider, spec)`. Ele vai para o
+payload exatamente como você escreveu, só naquele provider. Em qualquer outro
+provider levanta `UnsupportedError`.
+
+Isso substitui a gambiarra de montar o payload nativo à mão ou chamar o SDK por
+fora da jangada: você continua com retry, fallback, custo, observabilidade e o
+`Completion` normalizado.
+
+```python
+from google.genai import types
+from jangada_ai import LLM, native_tool
+
+llm = LLM("gemini", "gemini-3.8-flash")
+comp = llm.complete(
+    "Notícias de hoje sobre energia solar no Nordeste",
+    tools=[native_tool("gemini", types.Tool(
+        google_search=types.GoogleSearch(exclude_domains=["exemplo.com"]),
+    ))],
+)
+
+claude = LLM("anthropic", "claude-sonnet-5")
+comp = claude.complete(
+    "Resuma as notícias de hoje sobre o Copom",
+    tools=[native_tool("anthropic", {
+        "type": "web_search_20260318", "name": "web_search", "max_uses": 2,
+    })],
+)
+```
+
+## Matriz por provider
+
+| Provider | `web_search` | `web_fetch` | `code_execution` | `file_search` | outras |
+|---|---|---|---|---|---|
+| **Gemini** | `google_search` | `url_context` | `code_execution` | `file_search` (stores = `file_search_store_names`) | `google_maps`, `computer_use` |
+| **Vertex AI** | idem Gemini | idem | idem | idem | idem |
+| **Anthropic** | `web_search_*` | `web_fetch_*` | `code_execution_*` | — | `computer_use` só via `native_tool` |
+| **OpenAI / Azure** | `web_search` | — | `code_interpreter` | `file_search` (stores = `vector_store_ids`) | `image_generation`, `computer_use` |
+| **Groq** `groq/compound*` | `web_search` embutida | `visit_website` | `code_interpreter` | — | — |
+| **Groq** `openai/gpt-oss-*` | `browser_search` | — | `code_interpreter` | — | — |
+| **OpenRouter** | plugin `web` | — | — | — | — |
+| **DeepSeek** | — | — | — | — | nenhuma |
+| **Mistral** | `web_search` (`premium=True` → `web_search_premium`) | — | `code_interpreter` | `document_library` (stores = `library_ids`) | `image_generation` |
+| **Bedrock** (Amazon Nova) | `nova_grounding` (Nova Premier / Nova 2) | — | `nova_code_interpreter` (Nova 2) | — | — |
+| **Ollama** | executada pelo adapter | executada pelo adapter | — | — | — |
+
+"—" = `UnsupportedError`.
+
+### Restrições que você precisa saber
+
+- **Gemini**: misturar tools nativas com function tools liga
+  `include_server_side_tool_invocations` (Gemini 3). `allowed_domains` não
+  existe na busca do Gemini (`UnsupportedError`); `blocked_domains` vira
+  `exclude_domains`. `container`/`files` do `code_execution` não existem no
+  Gemini.
+- **Vertex AI**: aceita as mesmas tools, mas **não** mistura tool nativa com
+  function tool na mesma chamada (o campo não existe no Vertex) →
+  `UnsupportedError`.
+- **Anthropic**: `allowed_domains` e `blocked_domains` juntos dão erro (a API
+  exige um ou outro). `stop_reason="pause_turn"` é continuado automaticamente
+  (até 5 vezes, somando usage e custo). O `container` do code execution é
+  reusado a partir do histórico.
+- **OpenAI / Azure**: com qualquer tool nativa, a chamada vai pela **Responses
+  API** (não chat.completions). `blocked_domains` não existe na busca da OpenAI.
+- **Groq**: os modelos `groq/compound*` têm as tools embutidas e **não aceitam
+  function tools do usuário** junto. Nos `openai/gpt-oss-*`, a busca não aceita
+  filtro de domínio. Outros modelos do Groq não têm tools nativas.
+- **OpenRouter**: `web_search()` vira o plugin `web`; `engine=` (ex.: `"exa"`,
+  `"native"`) e os domínios são repassados ao plugin.
+- **DeepSeek**: a API ignora tools built-in, então nem
+  `native_tool("deepseek", ...)` é aceito.
+- **Mistral**: as tools nativas só existem na **Conversations API**; com elas a
+  chamada vai por `beta.conversations` em vez de `chat.complete`. Por padrão o
+  histórico é reenviado a cada turno. Com `params={"store": True}` a conversa
+  fica guardada no servidor e o turno seguinte usa `append`. Function tools
+  funcionam junto; `stream` e `parse` com tools nativas não.
+- **Bedrock**: só modelos **Amazon Nova** (perfis `us.*`) e a permissão IAM
+  `bedrock:InvokeTool`. As server tools da Anthropic **não** existem no Bedrock.
+- **Ollama**: a API do Ollama não executa busca no servidor. `web_search()` e
+  `web_fetch()` viram function tools que **o adapter executa** (via Ollama
+  Cloud, até 5 rodadas, somando usage) e devolve a resposta final com
+  `server_tool_calls` e `citations`. Exige `OLLAMA_API_KEY`. `stream` e `parse`
+  com essas tools não são suportados. Veja [Ollama](/docs/llm-ollama).
+- **`parse()` com tools nativas**: só no Gemini (structured output + built-in
+  tools). Nos outros providers levanta `UnsupportedError`.
+- **`computer_use`**: a lib expõe o pedido de ação em `server_tool_calls`, mas
+  **não executa** o loop de tela. Executar a ação e devolver o screenshot é
+  com o seu código.
+- **Cache**: chamadas com tools (nativas ou não) não entram no cache.
+
+## O que volta no `Completion`
+
+- **`comp.text`**: a resposta final (só texto; código executado não entra aqui).
+- **`comp.citations`**: lista de
+  `Citation(url, title, cited_text, start, end, source)`. `start`/`end` são
+  offsets em `comp.text`, quando o provider informa.
+- **`comp.server_tool_calls`**: lista de
+  `ServerToolCall(type, input, output, id)`, o que o provider executou (queries de busca, código + saída, URLs
+  lidas...). É informativo: a lib não executa nada.
+- **`comp.usage["server_tool_requests"]`**: contagem por tool, ex.:
+  `{"web_search": 2}`. É o que o provider cobra por chamada.
+- **`comp.metadata`**: dados opacos do provider que precisam voltar no
+  histórico (ver multi-turn abaixo).
+
+```python
+comp = llm.complete("Calcule a soma dos 50 primeiros primos.",
+                    tools=[code_execution()])
+for call in comp.server_tool_calls:
+    print(call.type, call.input, "->", call.output)
+```
+
+> **Gemini + Google Search: exiba as sugestões de busca.** A política do Google
+> exige mostrar as *Search Suggestions* junto da resposta com grounding. O HTML
+> pronto vem em `comp.metadata["search_entry_point"]`.
+
+## Multi-turn: `assistant_message()` preserva os blocos nativos
+
+Algumas APIs exigem receber de volta, **intactos**, os blocos gerados pelas
+tools nativas: `encrypted_content` da Anthropic, partes
+`tool_call`/`tool_response` com `thought_signature` do Gemini, output items da
+OpenAI. `comp.assistant_message()` copia esses blocos para
+`Message.metadata`, e o adapter os reenvia exatamente como vieram. Basta usar o
+histórico normalmente:
+
+```python
+from jangada_ai import LLM, Message, url_context, web_search
+
+llm = LLM("anthropic", "claude-sonnet-5")
+p1 = "Quais foram as principais notícias de tecnologia de hoje?"
+comp = llm.complete(p1, tools=[web_search()])
+
+hist = [Message(role="user", content=p1), comp.assistant_message()]
+comp2 = llm.complete("Aprofunde a segunda notícia.", history=hist,
+                     tools=[web_search(), url_context()])
+```
+
+Não monte a mensagem do assistant à mão a partir de `comp.text`: você perde os
+blocos, e a Anthropic responde 400.
+
+## Custo
+
+Além dos tokens, várias tools nativas têm **taxa por chamada**. A jangada soma
+essas taxas em `Completion.cost`, a partir de `usage["server_tool_requests"]`:
+
+| Provider | Tool | Preço | Fonte |
+|---|---|---|---|
+| Anthropic | `web_search` | US$ 10 / 1.000 buscas | platform.claude.com (web search tool) |
+| Anthropic | `web_fetch` | sem taxa (só tokens) | platform.claude.com (web fetch tool) |
+| OpenAI / Azure | `web_search` | US$ 10 / 1.000 chamadas | developers.openai.com/api/docs/pricing |
+| OpenAI / Azure | `file_search` | US$ 2,50 / 1.000 chamadas | developers.openai.com/api/docs/pricing |
+| Gemini 3.x | `web_search` | US$ 14 / 1.000 queries | ai.google.dev/gemini-api/docs/pricing |
+| Gemini 2.5 | `web_search` | US$ 35 / 1.000 prompts com grounding | ai.google.dev/gemini-api/docs/pricing |
+| Gemini 3.x / 2.5 | `google_maps` | US$ 14 / 1.000 queries · US$ 25 / 1.000 prompts | ai.google.dev/gemini-api/docs/pricing |
+| Mistral | `web_search` / `code_execution` | US$ 30 / 1.000 chamadas | mistral.ai/pricing/api |
+| Mistral | `image_generation` | US$ 100 / 1.000 imagens | mistral.ai/pricing/api |
+| Mistral | `file_search` (document library) | US$ 0,01 / chamada | mistral.ai/pricing/api |
+
+Sem taxa confirmada (o custo dessas tools **não** entra em `cost`): Groq
+compound/browser search, OpenRouter (varia por engine), Bedrock Nova grounding,
+code interpreter da OpenAI (cobrado por sessão de container). As cotas grátis
+dos providers (ex.: Gemini) **não** são descontadas.
+
+Preços são aproximados e se atualizam sozinhos (ver [Custo](/docs/cost)). Registre
+uma taxa própria com `jangada_ai.pricing.register_tool_fee(tool, usd_per_1k, ...)`.
+
+## Com `Agent`
+
+`Agent` aceita tools nativas misturadas com as suas funções. As nativas não são
+executadas localmente: entram no `tool_trace` marcadas com `"server": True`.
+
+```python
+from jangada_ai import LLM, Agent, web_search
+
+pesquisador = Agent(
+    LLM("gemini", "gemini-3.8-flash"),
+    role="Pesquisador",
+    goal="Responder com fontes atuais",
+    tools=[web_search(), cotacao_interna],
+)
+res = pesquisador.run("Como o dólar fechou hoje frente à nossa cotação interna?")
+```
+
+## Exemplos por provider
+
+```python
+from jangada_ai import LLM, code_execution, file_search, google_maps, web_search
+
+# Gemini: busca + Maps com localização do usuário
+LLM("gemini", "gemini-3.8-flash").complete(
+    "Cafés abertos agora perto de mim", tools=[google_maps(lat=-8.05, lng=-34.9)])
+
+# OpenAI: busca em vector store próprio
+LLM("openai", "gpt-5").complete(
+    "O que diz o contrato sobre multa?", tools=[file_search(["vs_123"], top_k=5)])
+
+# Groq compound: busca + código embutidos (sem function tools do usuário)
+LLM("groq", "groq/compound").complete(
+    "Qual a população de Recife dividida pela de Olinda?",
+    tools=[web_search(), code_execution()])
+
+# OpenRouter: plugin web com engine escolhido
+LLM("openrouter", "openai/gpt-5-mini").complete(
+    "Novidades do Python 3.14", tools=[web_search(engine="exa", max_results=3)])
+
+# Mistral: busca premium (notícias) pela Conversations API
+LLM("mistral", "mistral-medium-latest").complete(
+    "Manchetes de economia de hoje", tools=[web_search(premium=True)])
+
+# Bedrock: grounding do Amazon Nova
+LLM("bedrock", "us.amazon.nova-premier-v1:0").complete(
+    "Quem é o atual presidente do Banco Central?", tools=[web_search()])
+```
+
+Relacionado: [Tools (function calling)](/docs/tools), [Ollama](/docs/llm-ollama),
+[Gemini Interactions](/docs/interactions), [Custo](/docs/cost),
+[Agentes](/docs/agents).

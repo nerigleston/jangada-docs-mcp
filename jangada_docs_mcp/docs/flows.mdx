@@ -75,7 +75,23 @@ g.parallel(
 para observabilidade. Detalhes em [Custo e tokens](/docs/cost) e, para inspecionar
 passo a passo, [Debug](/docs/debug).
 
+## O que mudou na 1.9.0
+
+- **`Flow.arun(**contexto)`**: versão assíncrona do `Flow`.
+- **`Graph(max_steps=50)`**: teto de nós executados num `run`; um router cíclico
+  que nunca termina levanta `RuntimeError` em vez de gastar sem limite.
+- **Nó revisitado** (ciclo) ou step com nome repetido não sobrescreve o anterior:
+  as visitas aparecem como `nome#2`, `nome#3` em `completions`/`durations`, e
+  `usage`/`cost` somam todas. `parsed("nome")` devolve a última visita.
+- **Ramos paralelos com `on_error="raise"`**: quando um ramo falha, os irmãos ainda
+  pendentes são cancelados (antes continuavam rodando e gastando tokens).
+- **Nomes reservados.** Nós, steps, ramos e variáveis de contexto não podem se
+  chamar `system`, `history`, `params`, `tools`, `tool_choice`, `files`, `images`,
+  `schema`, `prompt`, `mcp_servers` ou `self` — eles colidiam com os argumentos de
+  `complete` e causavam erros estranhos. Agora levantam `ValueError` na hora.
+- `then()`/`route()` num bloco paralelo levantam erro (antes eram ignorados em
+  silêncio); `join` apontando para nó inexistente tem mensagem própria.
+
 ## Exemplo
 
 `examples/graph_example.py` — script executável.
-

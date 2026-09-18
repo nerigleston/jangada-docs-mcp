@@ -94,6 +94,61 @@ URL defaults to `https://jangada.dev.br/prices.json` (override with `url=` or th
 - Aggregated totals in [Flows and Graph](/en/docs/flows).
 - In [Step-by-step debug](/en/docs/debug), the cost of each step is shown in the trace.
 
+## What changed in 1.9.0
+
+### Usage contract
+
+Every adapter returns `usage` in the same shape:
+
+| Key | Meaning |
+|-----|---------|
+| `input_tokens` | **total** input, cache tokens included |
+| `output_tokens` | total output (on Gemini it includes thinking tokens) |
+| `cache_read_tokens` | part of the input read from cache (optional) |
+| `cache_write_tokens` | part of the input written to cache (optional) |
+| `reasoning_tokens` | part of the output spent reasoning (informative only) |
+| `server_tool_requests` | native tool calls, e.g. `{"web_search": 2}` |
+
+`compute_cost` charges uncached input at full price, cache reads/writes at the
+model's cache price, output once (reasoning is **not** charged twice) and adds
+the **per-call fee** of native tools. Previously cache and thinking were ignored —
+Gemini with thinking and Claude with prompt caching came out far cheaper than the
+real bill.
+
+### Cache prices, above-200k tier and tool fees
+
+- Each rule may have `cache_read`/`cache_write` (USD per 1M tokens). Without them
+  the library uses the family's documented multiplier (Claude 0.1×/1.25×;
+  Gemini 0.1×; gpt-5 0.1×; gpt-4.1/o3/o4-mini 0.25×; gpt-4o/o1/o3-mini 0.5×;
+  unknown 1×).
+- `above_200k=(in, out)` applies another price when the prompt exceeds 200k tokens
+  (e.g. Gemini 2.5 Pro, 3.1 Pro).
+- Per-call fees for native tools (`tool_fees` catalog): Anthropic and OpenAI web
+  search US$10/1k, Google Search on Gemini 3.x US$14/1k queries, OpenAI file
+  search US$2.50/1k, Mistral connectors, etc. They go into `Completion.cost`.
+  Free tiers are **not** deducted.
+- Model matching gained boundaries: `claude-opus-4` is 15/75 again (it no longer
+  inherits the Opus 4.5+ price), `gpt-5-pro`/`o3-mini` don't take the base model
+  rule, and a model without a rule returns `None` instead of a wrong price.
+- A hit on the library's own cache returns `cost=0.0` and `cached=True`.
+
+```python
+from jangada_ai import register_price
+from jangada_ai.pricing import register_tool_fee, compute_cost
+
+register_price(r"my-model", 1.0, 4.0, cache_read=0.1, above_200k=(2.0, 8.0))
+register_tool_fee("web_search", 12.0, provider="my-provider")   # USD per 1000 calls
+
+compute_cost("claude-sonnet-5", {"input_tokens": 10_000, "cache_read_tokens": 8_000,
+                                  "output_tokens": 500,
+                                  "server_tool_requests": {"web_search": 1}},
+             provider="anthropic")
+```
+
+The remote catalog refresh now only accepts `https`, validates types and sizes,
+rejects dangerous regexes and **replaces** the remote batch on each refresh (it
+used to accumulate).
+
 ## Example
 
 `examples/retry_cost_example.py` — runnable script.

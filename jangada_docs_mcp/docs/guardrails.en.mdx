@@ -94,3 +94,18 @@ class MaxLength(Guardrail):
         text = " ".join(m.content for m in messages if isinstance(m.content, str))
         return GuardResult(len(text) <= self.limit, "exceeded the limit")
 ```
+
+## What changed in 1.9.0
+
+- **Safe under concurrent calls.** The flag that stops the judge from triggering
+  the guardrails again is now per context (`ContextVar`), not an `LLM` attribute.
+  Previously, with `asyncio.gather` or threads sharing the same `LLM`, one call
+  could **skip every guardrail** while another was waiting for the judge.
+- **`ScopeGuard(check_history=False)`** (default): checks only what arrived after
+  the last assistant turn — the new user message and new tool results. A blocked
+  term far back in the history no longer locks the conversation forever, and an
+  agent loop doesn't re-judge the whole history on each iteration. Use
+  `check_history=True` for the old behavior.
+- **Tool results** (role `tool`) go through the blocklist.
+- **An output refusal keeps the cost**: when the output guard blocks, the refusal
+  carries the `usage`/`cost` of the call that was already paid.

@@ -52,6 +52,17 @@ LLM(
 Errors are normalized (with `status_code`) — see [Errors](/en/docs/errors). For the
 aggregated cost across candidates, see [Cost and tokens](/en/docs/cost).
 
+## What changed in 1.9.0
+
+- When every candidate fails, the final error is sent to
+  [observability](/en/docs/observability) as an `ERROR` observation (once per call, not
+  per attempt).
+- `embed`/`aembed` now retry with backoff on transient errors — but **without
+  fallback** to another model: vectors from different models aren't comparable
+  and would corrupt the index.
+- Refusals and empty responses become normalized errors that go into failover
+  (see [Errors](/en/docs/errors)); a Gemini safety-blocked prompt is not retried.
+
 ## Example
 
 `examples/fallback_example.py` — runnable script.

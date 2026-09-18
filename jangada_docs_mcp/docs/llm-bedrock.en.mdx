@@ -61,3 +61,22 @@ and network isolation (VPC)**, without spreading each vendor's API keys. Combine
 it as a **fallback** for direct Claude (Anthropic) to get cross-cloud
 redundancy. See [Providers](/en/docs/providers) and
 [Retry and fallback](/en/docs/retry-fallback).
+
+## What changed in 1.9.0
+
+- **Converse fields passed through**:
+  `extra={"additionalModelRequestFields": ...}`, `guardrailConfig`,
+  `promptVariables`, `requestMetadata`, `performanceConfig`, `serviceTier` and
+  `additionalModelResponseFieldPaths` go straight into the call (they used to be
+  silently dropped).
+- **`tool_choice="none"`** doesn't send the tools (except when the history already
+  has `toolUse`, which the API requires).
+- **Streaming**: an error mid-stream (throttling, `ModelStreamErrorException`)
+  becomes a normalized error in `astream` too, and the stream is closed if you
+  stop consuming it.
+- **Native tools (Amazon Nova)**: `web_search()` becomes `nova_grounding` and
+  `code_execution()` becomes `nova_code_interpreter` (Nova 2). Requires `us.*`
+  profiles and the `bedrock:InvokeTool` IAM permission. See
+  [Native tools](/en/docs/native-tools).
+- **Usage with cache** (`cache_read_tokens`/`cache_write_tokens`) and a system
+  message given as parts has its text extracted.

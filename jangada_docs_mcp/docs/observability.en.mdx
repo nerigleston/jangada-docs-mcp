@@ -177,3 +177,25 @@ At [app.jangada.dev.br](https://app.jangada.dev.br) you track everything:
 - Reusing the same batch id (via `observability_session(id=...)`) **appends**
   observations to the same trace, idempotently on the backend.
 - The cost/token fields come from [Cost and tokens](/en/docs/cost).
+
+## What changed in 1.9.0
+
+- **Failures become traces too.** When a call exhausts retries and fallbacks, the
+  library sends an observation with `status="ERROR"` and the error (type +
+  message, truncated) — previously only successes showed up in the dashboard. To
+  report manually: `jangada_ai.observability.auto_report_error(error, provider=..., model=...)`.
+- **Real call start.** `startedAt` now marks when the call started (not when it
+  finished); `auto_report(..., started_at=...)` accepts an epoch or a `datetime`.
+- **Streaming and transcription reported.** `stream`/`astream` send the
+  accumulated text at the end (capability `streaming`); `transcribe` also reports
+  (`audio`). Cache hits get the `cache` capability.
+- **Bounded queue.** Instead of one thread per call there is a queue (1000 events)
+  with a few workers; if the endpoint is slow and the queue fills up, extra events
+  are dropped — `dropped_count()` tells how many. `flush()` and the `atexit` hook
+  wait for the queue to drain, with a deadline.
+- **HTTPS only.** The endpoint (and the `feedback` one) must be `https://` (`http`
+  only on localhost), so the key and prompts don't travel in clear text.
+- **Output truncated** like the input, and `embed` no longer sends every vector
+  (only dimensions and counts above a threshold).
+- Send failures go to the `DEBUG` log of the `jangada_ai` logger (they never break
+  the call).

@@ -63,3 +63,19 @@ morto; baixo demais = respostas erradas (falso-positivo).
 `complete`/`parse` e suas versões async compartilham a mesma chave. O cache é
 **local ao processo** (a `Completion` fica em memória; o vector store é usado só
 para a similaridade).
+
+## O que mudou na 1.9.0
+
+- **A chave inclui o schema do `parse`**: `parse(p, A)` seguido de `parse(p, B)`
+  não devolve mais o objeto do tipo `A`.
+- **`SemanticCache` separa por contexto**: system, histórico anterior e partes
+  não-texto (imagens) entram no escopo. "sim" ou "continue" em conversas
+  diferentes não dão mais hit com a resposta de outra conversa.
+- **O hit devolve uma cópia** com `cost=0.0` e `cached=True` — somar custos num
+  `Flow`/`Agent` não conta de novo uma chamada que não foi paga, e mexer no objeto
+  devolvido não altera o que está no cache.
+- **Evicção e expiração limpam o vector store** do `SemanticCache` (antes as
+  entradas mortas ficavam lá e derrubavam a taxa de acerto).
+- **Erro no cache não derruba a chamada**: falha no `get`/`set` (ex.: o embedder do
+  cache semântico tomou rate limit) vira miss, com log em `DEBUG`.
+- `ExactCache` e `SemanticCache` são seguros entre threads.

@@ -68,3 +68,15 @@ print(stt.transcribe("audio.mp3", language="pt").text)
   client-side ou os providers Anthropic/OpenAI/Groq para MCP remoto por URL.
 
 Veja [Providers](/docs/providers) e [Matriz de capacidades](/docs/capabilities).
+
+## O que mudou na 1.9.0
+
+- **Tools nativas via Conversations API**: `web_search()` (ou
+  `web_search(premium=True)`), `code_execution()`, `image_generation()` e
+  `file_search(stores=[...])` (document library) fazem a chamada ir por
+  `beta.conversations`. Function tools do usuário funcionam junto; com tools
+  nativas, `stream` e `parse` não são suportados. Com `params={"store": True}`, o
+  turno seguinte continua a conversa no servidor. Veja [Tools nativas](/docs/native-tools).
+- **Embeddings em lote**: listas grandes são fatiadas em várias requisições.
+- Resposta vazia vira `ServerError`; argumentos de tool com JSON inválido ficam em
+  `metadata["raw_arguments"]`.

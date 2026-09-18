@@ -57,6 +57,33 @@ A PDF **without** a text layer (scanned) raises `DocumentError` suggesting
 
 Related: [Vision](/en/docs/vision), [Structured output](/en/docs/structured-output).
 
+## What changed in 1.9.0
+
+- **Scanned PDFs with `mode="vision"` really work**: each page is rendered to PNG
+  (up to `Document(..., max_pages=20)`) and sent as an image. It uses `pypdfium2`
+  (now in the `[files]` extra) or `pymupdf` if installed; without either, the
+  error says what to install. The library never sends a PDF as if it were an
+  image (that caused a 400 at the provider). To build the parts yourself:
+  `jangada_ai.files.to_parts(doc)` returns one part per page.
+- **CSV encoding**: tries UTF-8 (with and without BOM), then cp1252 and latin-1 —
+  CSVs exported by Excel in Latin locales no longer turn into `�`.
+- **Large CSV/TSV** are streamed up to `max_rows`; `.tsv` uses its own extractor.
+- **Protected PDF**: tries an empty password; otherwise raises a clear
+  `DocumentError` (corrupted PDFs too).
+- **xlsx**: a formula cell without a cached value shows up as
+  `[fórmula sem valor calculado: =...]` instead of empty; `|` and line breaks in
+  cells are escaped in the markdown table.
+- **Nameless bytes**: the format is detected from the content (PDF, PNG, JPEG,
+  GIF, WEBP, BMP, docx, xlsx).
+
+```python
+from jangada_ai import LLM, Document
+
+llm = LLM("gemini", "gemini-3.5-flash")
+comp = llm.complete("Transcribe the invoice.",
+                    files=[Document("scanned_invoice.pdf", mode="vision", max_pages=3)])
+```
+
 ## Example
 
 `examples/files_example.py` — runnable script.

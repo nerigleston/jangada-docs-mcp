@@ -67,3 +67,15 @@ print(stt.transcribe("audio.mp3", language="en").text)
   Anthropic/OpenAI/Groq providers for remote MCP by URL.
 
 See [Providers](/docs/providers) and [Capabilities matrix](/docs/capabilities).
+
+## What changed in 1.9.0
+
+- **Native tools via the Conversations API**: `web_search()` (or
+  `web_search(premium=True)`), `code_execution()`, `image_generation()` and
+  `file_search(stores=[...])` (document library) route the call through
+  `beta.conversations`. User function tools work alongside; with native tools,
+  `stream` and `parse` are not supported. With `params={"store": True}`, the next
+  turn continues the conversation server-side. See [Native tools](/en/docs/native-tools).
+- **Batched embeddings**: large lists are split into several requests.
+- An empty response becomes `ServerError`; tool arguments with invalid JSON are
+  kept in `metadata["raw_arguments"]`.

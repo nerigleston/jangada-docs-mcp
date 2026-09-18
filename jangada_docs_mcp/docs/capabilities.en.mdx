@@ -13,6 +13,7 @@ each provider can do under the hood.
 | Structured output (`parse`)     | ✅     | ✅   | ✅     | ✅        | ✅      |
 | Tools / function calling        | ✅     | ✅   | ✅     | ✅        | ✅      |
 | MCP (`mcp_servers=`)            | ✅ URL | ✅ URL | ✅ session⁴ | ✅ URL | ❌      |
+| Native tools (`web_search()`…)⁵ | ✅ (Responses) | ⚠️ compound/gpt-oss | ✅ | ✅ | ✅ (Conversations) |
 | Embeddings (`embed`)            | ✅     | ❌   | ✅     | ❌        | ✅      |
 | Streaming (`stream`/`astream`)  | ✅     | ✅   | ✅     | ✅        | ✅      |
 | Vision / images (`images=`)     | ✅     | ⚠️¹  | ✅     | ✅        | ⚠️¹     |
@@ -31,6 +32,10 @@ that's why it works everywhere. See [Documents](/en/docs/documents).
 ³ The bounding box convention (0–1000) is native to Gemini, which is the most precise.
 ⁴ MCP on Gemini is **client-side per session** and async only (`acomplete`); the
 others are **remote per URL** (server-side). See [MCP](/en/docs/mcp).
+⁵ Tools run by the provider (web search, url context, code execution, file
+search…). Support varies per tool and per model; they also exist on
+OpenRouter, Bedrock (Amazon Nova) and [Ollama](/en/docs/llm-ollama) (run by the
+adapter). Full matrix in [Native tools](/en/docs/native-tools).
 
 ## How each one implements structured output
 
@@ -49,6 +54,7 @@ others are **remote per URL** (server-side). See [MCP](/en/docs/mcp).
 - [Gemini](/en/docs/llm-gemini)
 - [Anthropic](/en/docs/llm-anthropic)
 - [Mistral](/en/docs/llm-mistral)
+- [Ollama](/en/docs/llm-ollama) (local models and Ollama Cloud)
 
 The canonical parameters and per-model profiles (gpt-5, gemini-3.x) are in
 [Parameters and profiles](/en/docs/parameters).

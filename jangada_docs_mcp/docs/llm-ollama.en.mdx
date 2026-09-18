@@ -1,0 +1,168 @@
+---
+title: "Ollama"
+description: "Provider ollama. Adapter over Ollama's native API (ollama SDK): local models with no key and Ollama Cloud; num_ctx/keep_alive/think via extra=, structured output with format, tools with nested schemas, vision, embeddings and web search/fetch."
+---
+
+Provider `ollama`. Adapter over the official `ollama` SDK, talking to
+[Ollama](https://docs.ollama.com)'s **native API** (`/api/chat`, `/api/embed`).
+Runs **local** models (no key, no per-token cost) and also **Ollama Cloud**.
+
+```bash
+pip install "jangada-ai[ollama]"     # SDK ollama>=0.6
+ollama serve                         # local server at http://localhost:11434
+ollama pull llama3.2
+```
+
+- **`provider=`**: `"ollama"`
+- **Environment variable**: `OLLAMA_API_KEY` (**optional**; only for Cloud and
+  for web search/fetch)
+- **Host**: `host=` in the constructor > env `OLLAMA_HOST` > `http://localhost:11434`
+
+```python
+from jangada_ai import LLM
+
+llm = LLM("ollama", "llama3.2")          # works with no key at all
+print(llm.complete("Say hello in Portuguese.").text)
+```
+
+> **Why the native API and not the OpenAI-compatible one (`/v1`)?** Only the
+> native API exposes `num_ctx` (context size), `keep_alive`, `format` with a
+> full JSON Schema, and `think`. Through `/v1` you can't raise the context, and
+> Ollama silently cuts the prompt when it goes over the limit.
+
+## Local vs Cloud
+
+```python
+# local (default)
+LLM("ollama", "qwen3")
+
+# another server on the network
+LLM("ollama", "qwen3", host="http://192.168.0.10:11434")
+
+# Ollama Cloud: explicit host + OLLAMA_API_KEY in the environment (or api_key=)
+LLM("ollama", "gpt-oss:120b", host="https://ollama.com")
+```
+
+Having `OLLAMA_API_KEY` in the environment does **not** switch the host by
+itself: to use Cloud, pass `host="https://ollama.com"`. With a key, the adapter
+sends `Authorization: Bearer <key>`.
+
+## Native options via `extra=`
+
+Canonical params (`temperature`, `top_p`, `top_k`, `seed`, `stop`) go into
+`options`, and `max_tokens` becomes `options.num_predict`. The rest goes through
+`extra=`:
+
+| Key | Where it goes | What for |
+|---|---|---|
+| `num_ctx` | `options` | Context window size. **jangada sets no default**: the default depends on the server version and on VRAM. For agents/RAG, pass something like `8192`–`32768`. |
+| `keep_alive` | top level | How long the model stays loaded (e.g. `"10m"`, `-1`) |
+| `think` | top level | Thinking: `True`/`False` or `"low"`/`"medium"`/`"high"` (gpt-oss only accepts levels) |
+| `format` | top level | `"json"` or a JSON Schema (`parse` already fills it in) |
+| `logprobs`, `top_logprobs` | top level | Log-probabilities |
+| any other (`min_p`, `repeat_penalty`…) | `options` | Model options |
+
+```python
+llm = LLM("ollama", "llama3.2", temperature=0.2,
+          extra={"num_ctx": 8192, "keep_alive": "10m"})
+```
+
+## What it does
+
+- **Text** (`complete`/`acomplete`) and **streaming** (`stream`/`astream`). In
+  the stream, usage and `finish_reason` arrive in the last chunk and are kept in
+  `llm.provider.last_stream`.
+- **Structured output** (`parse`/`aparse`): sends the Pydantic model's JSON
+  Schema in `format`. According to Ollama's docs, Cloud does **not** support
+  `format` today.
+
+  ```python
+  from pydantic import BaseModel
+
+  class Country(BaseModel):
+      name: str
+      capital: str
+
+  print(llm.parse("Tell me about Brazil.", Country).parsed)
+  ```
+
+- **Tools / function calling**: with full nested schemas (Pydantic parameters,
+  `anyOf`). The API returns no id per call, so jangada generates `"name#i"`. The
+  result goes back as `role="tool"` with `tool_name`. `tool_choice="none"`
+  doesn't send the tools; other values are ignored (the API has no such
+  parameter).
+- **Vision** (`images=`): images go in base64 in the message (use a vision
+  model, e.g. `llama3.2-vision`, `qwen2.5vl`, `gemma3`).
+- **Thinking**: with `extra={"think": True}`, the reasoning goes to
+  `comp.raw.message.thinking` and does **not** go into `comp.text`. In answers
+  with tool calls, it's kept and resent in the history.
+- **Embeddings** (`embed`/`aembed`): through `/api/embed`, in batches of 64, with
+  optional `dimensions=` and `truncate=`.
+
+  ```python
+  emb = LLM("ollama", "embeddinggemma")
+  vector = emb.embed("a jangada is a raft boat")
+  ```
+
+- **Documents** (`files=`): local text extraction (common to every provider).
+
+## Web search and web fetch
+
+Ollama offers web search and page reading through its Cloud API (free account,
+requires `OLLAMA_API_KEY`). There are two ways to use it:
+
+**As a native tool**: `web_search()`/`web_fetch()` in `tools=`. Since Ollama
+doesn't run these tools on the server, **the adapter runs them** when the model
+calls them (up to 5 rounds, adding up usage) and returns the final answer with
+`server_tool_calls` and `citations`, just like the other providers. Your function
+tools keep working alongside: if the model calls one of them, the answer comes
+back with `tool_calls` as usual. `stream` and `parse` with these tools aren't
+supported.
+
+```python
+from jangada_ai import LLM, web_search
+
+llm = LLM("ollama", "qwen3", extra={"num_ctx": 32768})
+comp = llm.complete("What's new in Python 3.14?", tools=[web_search()])
+print(comp.text)
+for c in comp.citations:
+    print("-", c.title, c.url)
+```
+
+**Directly on the provider**: returns data, without going through the model.
+
+```python
+results = llm.provider.web_search("jangada boat", max_results=3)
+# [{"title": ..., "url": ..., "content": ...}, ...]
+page = llm.provider.web_fetch("https://ollama.com")
+# {"title": ..., "url": ..., "content": ..., "links": [...]}
+# async: await llm.provider.aweb_search(...) / aweb_fetch(...)
+```
+
+See [Native tools](/en/docs/native-tools).
+
+## Errors (with hints)
+
+- **Model not pulled** (404) → `NotFoundError` with the hint
+  `ollama pull <model>`. It's in the default failover, so an
+  `LLM(...).with_fallback(...)` falls back to the next model.
+- **Server down** → `APIConnectionError` with the hint `ollama serve`.
+- **Error mid-stream** (comes as an `{"error": ...}` object in the NDJSON) →
+  `ServerError`.
+
+## What it does NOT support (raises a clear error)
+
+- **Server-side MCP** (`mcp_servers=`): `UnsupportedError`. **Client-side** MCP
+  (`MCPClient`/`run_agent`) works normally.
+- **Audio transcription** and **OCR**: `UnsupportedError`.
+- **Web search/fetch without `OLLAMA_API_KEY`**: `UnsupportedError`.
+
+## Cost
+
+A local model has no per-token cost, and Cloud is billed by subscription. So
+`comp.cost` comes back `None` (there's no price rule for Ollama). Tokens are
+still in `comp.usage` (`input_tokens` = `prompt_eval_count`, `output_tokens` =
+`eval_count`).
+
+Related: [Native tools](/en/docs/native-tools), [Providers and keys](/en/docs/providers),
+[Capability matrix](/en/docs/capabilities), [Parameters](/en/docs/parameters).

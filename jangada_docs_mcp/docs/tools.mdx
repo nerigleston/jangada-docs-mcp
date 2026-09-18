@@ -72,9 +72,9 @@ llm.complete("Qual a cotação do dólar hoje?", tools=[tavily_search])
 |------|-----------|
 | `calculator` | avalia expressões aritméticas (seguro, via `ast`) |
 | `current_datetime` | data/hora atuais (fuso IANA) |
-| `fetch_url` | baixa uma página e devolve o texto legível |
+| `fetch_url` | baixa uma página e devolve o texto legível (bloqueia rede interna por padrão) |
 | `wikipedia_search` | resumo da Wikipedia (sem chave) |
-| `http_request` | requisição HTTP genérica (GET/POST/...) |
+| `http_request` | requisição HTTP genérica (GET/POST/...; bloqueia rede interna por padrão) |
 
 **Com chave (lê do ambiente, ou passe `api_key=`):**
 
@@ -97,7 +97,37 @@ Veja também [Structured output](/docs/structured-output) (que no Anthropic já 
 tool-forcing por baixo) e [Observabilidade](/docs/observability) (as tool calls
 aparecem no trace).
 
+## O que mudou na 1.9.0
+
+- **Tipos de parâmetro.** `int | None` (sintaxe do Python 3.10+) vira o tipo
+  opcional correto no schema também no Python 3.10–3.13; `Union` de vários tipos
+  vira `anyOf`; um parâmetro anotado com um `BaseModel` do Pydantic vira o schema
+  do modelo, e `jangada_ai.coerce_args(fn, args)` converte o dict recebido na
+  instância (o `Agent` já faz isso sozinho). Anotações que não resolvem (forward
+  ref quebrada) não derrubam mais a função inteira.
+- **Argumentos com JSON inválido** não viram `{}` em silêncio: o `ToolCall` traz
+  `metadata["raw_arguments"]` e `metadata["args_error"] = True`.
+- **Tools nativas** (web search, code execution…) entram na mesma lista `tools=`
+  — veja [Tools nativas](/docs/native-tools).
+
+### Ferramentas prontas mais seguras
+
+- **`fetch_url` / `http_request` bloqueiam rede interna por padrão.** Só `http`/
+  `https`; o host é resolvido e loopback, rede privada, link-local (inclui o
+  metadata da nuvem, `169.254.169.254`), reservado e multicast são recusados —
+  também em cada redirect (máx. 5). O corpo é lido até 5 MB. Isso impede que um
+  prompt injection numa página faça o agente ler seu `.env` ou a rede da empresa.
+  Para chamar um serviço interno de propósito: `allow_private=True` na chamada ou
+  a env `JANGADA_HTTP_ALLOW_PRIVATE=1`.
+- **Erros de rede viram mensagem para o modelo** (URL malformada, conexão
+  resetada, resposta incompleta), em vez de exceção que derruba o loop.
+- **`fetch_url`** respeita o charset do servidor e decodifica entidades HTML.
+- **`calculator`** limita expoente (±1000) e tamanho dos números (10 mil dígitos) —
+  `9**9**9` não trava mais o processo.
+- **CNPJ alfanumérico.** `validar_cnpj`, `formatar_cnpj`, `validar_documento` e
+  `consultar_cnpj` aceitam o formato novo da Receita (letras nas 12 primeiras
+  posições, dígitos verificadores numéricos), ex.: `12.ABC.345/01DE-35`.
+
 ## Exemplo
 
 `examples/tools_example.py` — script executável.
-

@@ -31,6 +31,19 @@ See [Retry and fallback](/en/docs/retry-fallback) for the full policy.
 - For cost and tokens use the non-stream calls (`complete`/`parse`), which
   return `usage`/`cost` in the response — see [Cost and tokens](/en/docs/cost).
 
+## What changed in 1.9.0
+
+- Chunks without content (e.g. Azure's first content-filter chunk) no longer
+  break the stream, and the connection is closed if you stop consuming the
+  iterator halfway.
+- After the stream, the provider keeps `usage` and `finish_reason` in
+  `llm.provider.last_stream` (OpenAI, Azure, DeepSeek, Mistral, Ollama). It is
+  per instance: with several threads sharing the same `LLM`, read it right after
+  the stream.
+- The stream is reported to [observability](/en/docs/observability) at the end.
+- With native tools, streaming emits only the text (Anthropic/Gemini/OpenAI); on
+  Mistral and Ollama, streaming + native tools raises `UnsupportedError`.
+
 ## Example
 
 `examples/async_example.py` — executable script.

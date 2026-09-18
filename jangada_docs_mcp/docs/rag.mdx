@@ -249,6 +249,46 @@ chunk_text(texto, size=1000, overlap=200)   # quebra sem cortar palavras
 Relacionado: [Documentos](/docs/documents) (extração de texto reaproveitada no RAG)
 e [Observabilidade](/docs/observability).
 
+## O que mudou na 1.9.0
+
+- **API async completa**: `aadd_texts`, `aadd_document`, `async_texts`,
+  `async_document`, `asearch` e `aask` (usam `aembed`/`acomplete`; o store roda em
+  thread). O `Reranker` ganhou `arerank`, e há `aexpand_queries`/`acompress_results`.
+- **Busca híbrida corrigida no pgvector/Mongo.** A fusão (RRF) usava a identidade
+  do objeto e, nesses bancos, nunca juntava o mesmo trecho vindo das duas buscas —
+  devolvia duplicados. Agora usa uma chave estável (id → documento+hash → conteúdo).
+- **`min_score` no modo híbrido** filtra pela **similaridade vetorial** (antes da
+  fusão), não pelo score do RRF (que fica perto de 0,03 e zerava os resultados).
+- **O índice em memória não é mais alterado pela busca**: `parent_document` e
+  `compress=True` trabalham em cópias.
+- **Prompt padrão** delimita o contexto recuperado entre as tags `<contexto>` e
+  instrui o modelo a tratá-lo como dado, não como instrução (mitiga prompt
+  injection vindo de documentos). Prompts customizados com chaves literais (ex.:
+  um exemplo de JSON) não quebram mais.
+- **Embeddings em lotes** de 128 textos (os adapters OpenAI/Azure/OpenRouter e
+  Mistral também fatiam), então PDFs grandes não estouram o limite do provider.
+- **pgvector**:
+  - modelos com mais de 2000 dimensões (ex.: `gemini-embedding-001`,
+    `text-embedding-3-large`, 3072) são indexados via `halfvec` (exige pgvector ≥
+    0.7), até 4000; acima disso a tabela fica sem índice HNSW, com aviso;
+  - `add()`/`add_texts` devolvem quantos trechos foram **realmente** inseridos
+    (duplicatas por documento+hash são descartadas);
+  - o embedding é calculado fora da transação e do advisory lock, a conexão é
+    protegida por lock entre threads, e há `close()` + `with PgVectorStore(...)`;
+  - o nome da tabela é validado (aceita `schema.tabela`).
+- **Mongo Atlas**: grava o `hash` dos trechos, aceita `filter_fields=[...]` (campos
+  de metadata declarados como `filter` no índice — necessário para `filter=` na
+  busca), cai para a busca no cliente só em erro do Atlas (com aviso) e tem
+  `close()` + context manager.
+
+```python
+store = vector_store("postgresql://...", table="docs", text_config="portuguese")
+with store:
+    rag = RAG(chat=LLM("openai", "gpt-5-mini"), embedder=LLM("openai", "text-embedding-3-small"), store=store)
+    await rag.aadd_document("manual.pdf")
+    resp = await rag.aask("Qual o prazo de garantia?", min_score=0.3)  # min_score = cosseno
+```
+
 ## Exemplo
 
 `examples/rag_example.py` — script executável.

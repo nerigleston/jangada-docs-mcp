@@ -57,7 +57,34 @@ Um PDF **sem** camada de texto (escaneado) levanta `DocumentError` sugerindo
 
 Relacionado: [Vision](/docs/vision), [Structured output](/docs/structured-output).
 
+## O que mudou na 1.9.0
+
+- **PDF escaneado com `mode="vision"` funciona de verdade**: cada página é
+  renderizada em PNG (até `Document(..., max_pages=20)`) e vai como imagem. Usa o
+  `pypdfium2` (agora no extra `[files]`) ou o `pymupdf`, se instalado; sem nenhum
+  dos dois, o erro diz o que instalar. A lib nunca manda um PDF como se fosse
+  imagem (isso dava 400 no provider). Para montar as partes você mesmo:
+  `jangada_ai.files.to_parts(doc)` devolve uma parte por página.
+- **Encoding de CSV**: tenta UTF-8 (com e sem BOM), depois cp1252 e latin-1 — CSV
+  exportado do Excel brasileiro não vira mais `�`.
+- **CSV/TSV grandes** são lidos em streaming até `max_rows`; `.tsv` usa o extrator
+  próprio.
+- **PDF protegido**: tenta abrir com senha vazia; se não der, levanta
+  `DocumentError` claro (PDF corrompido também).
+- **xlsx**: célula de fórmula sem valor calculado aparece como
+  `[fórmula sem valor calculado: =...]` em vez de vazia; `|` e quebras de linha nas
+  células são escapados na tabela markdown.
+- **Bytes sem nome**: o formato é detectado pelo conteúdo (PDF, PNG, JPEG, GIF,
+  WEBP, BMP, docx, xlsx).
+
+```python
+from jangada_ai import LLM, Document
+
+llm = LLM("gemini", "gemini-3.5-flash")
+comp = llm.complete("Transcreva a nota fiscal.",
+                    files=[Document("nota_escaneada.pdf", mode="vision", max_pages=3)])
+```
+
 ## Exemplo
 
 `examples/files_example.py` — script executável.
-

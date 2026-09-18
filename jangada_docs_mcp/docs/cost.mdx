@@ -93,9 +93,62 @@ tem prioridade sobre tudo.
 - Totais agregados em [Fluxos e Graph](/docs/flows).
 - No [Debug passo a passo](/docs/debug), o custo de cada etapa é exibido no trace.
 
+## O que mudou na 1.9.0
+
+### Contrato de usage
+
+Todos os adapters devolvem `usage` no mesmo formato:
+
+| Chave | Significado |
+|-------|-------------|
+| `input_tokens` | **total** de input, já incluindo tokens de cache |
+| `output_tokens` | total de output (no Gemini inclui os tokens de thinking) |
+| `cache_read_tokens` | parte do input lida do cache (opcional) |
+| `cache_write_tokens` | parte do input gravada no cache (opcional) |
+| `reasoning_tokens` | parte do output gasta raciocinando (só informativa) |
+| `server_tool_requests` | chamadas de tools nativas, ex. `{"web_search": 2}` |
+
+`compute_cost` cobra o input não-cacheado a preço cheio, a leitura/escrita de cache
+pelo preço de cache do modelo, o output uma única vez (reasoning **não** é cobrado
+em dobro) e soma a **taxa por chamada** das tools nativas. Antes, cache e thinking
+eram ignorados — Gemini com thinking e Claude com prompt caching saíam bem mais
+baratos que a fatura real.
+
+### Preço de cache, faixa acima de 200k e taxas de tools
+
+- Cada regra pode ter `cache_read`/`cache_write` (USD por 1M tokens). Sem eles, a
+  lib usa o multiplicador documentado da família (Claude 0,1×/1,25×; Gemini 0,1×;
+  gpt-5 0,1×; gpt-4.1/o3/o4-mini 0,25×; gpt-4o/o1/o3-mini 0,5×; desconhecido 1×).
+- `above_200k=(in, out)` aplica outro preço quando o prompt passa de 200k tokens
+  (ex.: Gemini 2.5 Pro, 3.1 Pro).
+- Taxas por chamada de tools nativas (catálogo `tool_fees`): web search da
+  Anthropic e da OpenAI US$ 10/1k, Google Search no Gemini 3.x US$ 14/1k queries,
+  file search da OpenAI US$ 2,50/1k, conectores da Mistral etc. Entram no
+  `Completion.cost`. Cotas gratuitas **não** são descontadas.
+- O casamento de modelo ganhou fronteira: `claude-opus-4` volta a custar 15/75
+  (não herda o preço do Opus 4.5+), `gpt-5-pro`/`o3-mini` não pegam a regra do
+  modelo base, e um modelo sem regra devolve `None` em vez de um preço errado.
+- Um hit de cache da própria lib devolve `cost=0.0` e `cached=True`.
+
+```python
+from jangada_ai import register_price
+from jangada_ai.pricing import register_tool_fee, compute_cost
+
+register_price(r"meu-modelo", 1.0, 4.0, cache_read=0.1, above_200k=(2.0, 8.0))
+register_tool_fee("web_search", 12.0, provider="meu-provider")   # USD por 1000 chamadas
+
+compute_cost("claude-sonnet-5", {"input_tokens": 10_000, "cache_read_tokens": 8_000,
+                                  "output_tokens": 500,
+                                  "server_tool_requests": {"web_search": 1}},
+             provider="anthropic")
+```
+
+O refresh remoto do catálogo agora só aceita `https`, valida tipos e tamanhos,
+rejeita regex perigosa e **substitui** o lote remoto a cada atualização (antes
+acumulava).
+
 ## Exemplo
 
 `examples/retry_cost_example.py` — script executável.
 
 `examples/pricing_refresh_example.py` — preços dinâmicos com `refresh_prices()`.
-

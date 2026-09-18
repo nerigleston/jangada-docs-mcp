@@ -43,3 +43,21 @@ All inherit from `errors.LLMError`. The main categories:
 
 You can customize `retry_on=` and `backoff_on=` per `LLM` — see
 [Retry and fallback](/en/docs/retry-fallback).
+
+## What changed in 1.9.0
+
+- **More HTTP statuses mapped**: 408 → `APITimeoutError` and 409 → `ServerError`
+  (both transient, retried); 413 → `BadRequestError`.
+- **Refusals and empty responses become normalized errors.** A response without
+  `choices`, an OpenAI refusal in `parse` (`parsed=None`) or Claude without
+  `tool_use` in `parse` raise `OutputValidationError` / `ServerError` — which go
+  into failover — instead of raw `IndexError`/`StopIteration`.
+- **Truncated output in OpenAI `parse`** (`LengthFinishReasonError`) becomes
+  `TruncatedError`, with the hint to raise `max_tokens`.
+- **Gemini with a safety-blocked prompt** raises `BadRequestError` (no retry nor
+  fallback — it's deterministic), instead of a "transient" `ServerError`.
+- **`classify(e, provider, *, request=False)`**: with `request=True`, a Pydantic
+  `ValidationError` raised while **building the request** (SDKs like
+  google-genai and mistralai validate requests) becomes `BadRequestError`, not
+  `OutputValidationError` — an invalid `extra=` no longer fails over to another
+  model. The adapters already use it outside `parse`.

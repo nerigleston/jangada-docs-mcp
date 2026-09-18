@@ -49,3 +49,22 @@ llm = LLM("anthropic", "claude-opus-4-8")
 
 Related: [Capability matrix](/en/docs/capabilities),
 [Structured output](/en/docs/structured-output).
+
+## What changed in 1.9.0
+
+- **Compatible with `anthropic>=1.0`.** SDK 1.0 removed `temperature`, `top_p` and
+  `top_k` from the `messages.create()` signature — passing them raised
+  `TypeError`. The library now sends them in the body (`extra_body`), so
+  `LLM("anthropic", ..., temperature=0.2)` works with any SDK version.
+- **Extended thinking with tools across turns**: `thinking`/`redacted_thinking`
+  blocks (with signature) are preserved and resent before the `tool_use`, as the
+  API requires. In `parse`, thinking is turned off (a forced `tool_choice` is
+  incompatible with it).
+- **Native tools**: `web_search`, `web_fetch` and `code_execution` (see
+  [Native tools](/en/docs/native-tools)); blocks with `encrypted_content` go back intact in
+  the history and `pause_turn` is continued automatically.
+- **Usage with cache**: `input_tokens` includes cache tokens;
+  `cache_read_tokens` and `cache_write_tokens` show up with prompt caching, and
+  the cost uses the cache price.
+- A refusal without `tool_use` in `parse` raises `OutputValidationError` (goes
+  into failover); a response with no content becomes `ServerError`.

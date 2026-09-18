@@ -62,3 +62,19 @@ high = dead cache; too low = wrong answers (false positives).
 `complete`/`parse` and their async variants share the same key. The cache is
 **process-local** (the `Completion` is kept in memory; the vector store is used
 only for similarity).
+
+## What changed in 1.9.0
+
+- **The key includes the `parse` schema**: `parse(p, A)` followed by
+  `parse(p, B)` no longer returns the `A`-typed object.
+- **`SemanticCache` is scoped by context**: system, previous history and
+  non-text parts (images) are part of the scope. "yes" or "continue" in different
+  conversations no longer hit another conversation's answer.
+- **A hit returns a copy** with `cost=0.0` and `cached=True` — summing costs in a
+  `Flow`/`Agent` doesn't count an unpaid call again, and changing the returned
+  object doesn't change what is cached.
+- **Eviction and expiry clean the `SemanticCache` vector store** (dead entries
+  used to stay there and lower the hit rate).
+- **A cache error doesn't break the call**: a failure in `get`/`set` (e.g. the
+  semantic cache embedder got rate limited) becomes a miss, logged at `DEBUG`.
+- `ExactCache` and `SemanticCache` are thread-safe.

@@ -41,6 +41,22 @@ llm = LLM("openai", "gpt-4o-mini")
   derivados de `prompt_tokens`/`completion_tokens`), `raw` com o objeto nativo.
 - **Erros**: traduzidos por `errors.classify()` para a hierarquia normalizada.
 
+## O que mudou na 1.9.0
+
+- **Tools nativas → Responses API.** Com `web_search()`, `file_search()`,
+  `code_execution()` (code interpreter), `image_generation()` ou `computer_use()`
+  em `tools=`, a chamada vai pela Responses API (veja [Tools nativas](/docs/native-tools)).
+  Sem tools nativas, continua no chat.completions.
+- **Structured output strict**: o schema passa a listar todas as propriedades em
+  `required` (exigência do modo strict), e o fallback para JSON mode cobre mais
+  mensagens de "schema não suportado".
+- **Saída cortada no `parse`** vira `TruncatedError`; recusa (`refusal`) vira
+  `OutputValidationError`.
+- **Usage**: `cache_read_tokens` (prompt caching) e `reasoning_tokens` (modelos de
+  raciocínio) no `usage`; o custo aplica o desconto de cache.
+- **Embeddings em lote**: listas grandes são fatiadas em várias requisições (`llm.embed(textos, batch_size=...)`).
+- **Série o (o1/o3/o4)** tem regra de perfil: `max_completion_tokens` e sem sampling.
+
 ## Exemplo de structured
 
 ```python
@@ -53,4 +69,3 @@ llm.parse("Extraia: João, 30 anos.", Pessoa).parsed   # Pessoa(nome='João', id
 
 Relacionado: [Matriz de capacidades](/docs/capabilities), [Groq](/docs/llm-groq)
 (mesmo dialeto), [Transcrição de áudio](/docs/audio).
-

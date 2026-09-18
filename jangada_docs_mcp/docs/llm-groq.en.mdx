@@ -47,3 +47,14 @@ Low inference cost and speed — great for batch transcription
 (`whisper-large-v3-turbo`) and low-latency responses. Combine it as a
 **fallback** or **primary** with OpenAI (same dialect). See
 [Audio transcription](/en/docs/audio) and [Retry and fallback](/en/docs/retry-fallback).
+
+## What changed in 1.9.0
+
+- **Native tools**: on `groq/compound*` models, `web_search()`, `web_fetch()` and
+  `code_execution()` enable the built-in tools (`compound_custom`); on
+  `openai/gpt-oss-*`, `web_search()` becomes `browser_search` and
+  `code_execution()` becomes `code_interpreter`. Compound doesn't accept user
+  function tools in the same call. See [Native tools](/en/docs/native-tools).
+- **Structured output**: fields with defaults are now listed in `required` in
+  strict mode (Groq was rejecting the schema), and the fallback to JSON Object
+  mode triggers on more error messages.

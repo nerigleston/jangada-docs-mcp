@@ -82,3 +82,22 @@ LLM("gemini", "gemini-3-pro").complete("...",  params={"thinking_budget": 1024})
 
 It is the only one that covers vision, detection, and audio **without separate
 endpoints** — all via `generateContent`. See [Capability matrix](/en/docs/capabilities).
+
+## What changed in 1.9.0
+
+- **`ToolCall.id`** is the `id` returned by the API (or `"name#i"` when absent) —
+  no longer the function name. Two parallel calls to the same function no longer
+  collide. The real name is still used in the `function_response`, and old
+  histories (id equal to the name) keep working.
+- **A tool parameter called `title`** no longer disappears from the schema (the
+  schema cleaner was also removing the `title` key inside `properties`).
+- **A safety-blocked prompt** raises `BadRequestError` with the reason
+  (`prompt_feedback.block_reason`), without retry or fallback.
+- **Usage**: `output_tokens` includes thinking tokens (`reasoning_tokens` shows
+  how many) and `input_tokens` includes native-tool result tokens — both are
+  billed; the cost used to be underestimated.
+- **Native tools**: Google Search, URL context, code execution, file search,
+  Google Maps and computer use (see [Native tools](/en/docs/native-tools)). For the
+  Interactions API and agents (Deep Research), see [Interactions](/en/docs/interactions).
+- `transcribe` honours `language=`; `parse` with an empty response raises instead
+  of returning `parsed=None`; a system message given as parts has its text extracted.

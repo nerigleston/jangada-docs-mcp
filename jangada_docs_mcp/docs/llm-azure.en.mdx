@@ -62,3 +62,14 @@ a corporate contract** with Microsoft, while keeping OpenAI's models. The code
 is identical to direct OpenAI — swap `LLM("openai", ...)` for
 `LLM("azure", ...)`. See [OpenAI](/en/docs/llm-openai) and
 [Providers](/en/docs/providers).
+
+## What changed in 1.9.0
+
+- **`profile_model=`**: on Azure `model` is the deployment name, so the per-model
+  rules (gpt-5 without `temperature`, `max_completion_tokens`…) could not match.
+  Give the base model: `LLM("azure", "my-deploy", profile_model="gpt-5")`.
+- **Responses API through API v1**: remote MCP and [native tools](/en/docs/native-tools)
+  (web search, file search, code interpreter, image generation) use
+  `<endpoint>/openai/v1/`, without `api_version`. chat.completions keeps
+  `api_version` (default `2024-10-21`, overridable).
+- Content-filter chunks (without `choices`) no longer break the stream.

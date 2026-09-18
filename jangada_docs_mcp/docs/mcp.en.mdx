@@ -303,6 +303,50 @@ Extra `jangada-ai[mcp]` (HTTP also needs `starlette` + `uvicorn`).
 serves all of jangada's docs to your editor (Claude Code/Desktop/Cursor) — no
 clone: `uvx --from git+https://github.com/nerigleston/jangada-docs-mcp jangada-docs-mcp`.
 
+## What changed in 1.9.0
+
+- **Compatible with `mcp` 1.x and 2.x.** The `[mcp]` extra now accepts
+  `mcp>=1.0,<3`; client, server, SSE, streamable-HTTP and stdio were validated
+  end to end on both versions.
+- **Retries only where it is safe.** With `keep_alive=True`, the automatic
+  reconnection only retries side-effect-free operations (`list_*`,
+  `read_resource`, `get_prompt`, `ping`). `call_tool` is retried only when the
+  request provably **did not go out** (connection failure); on a read timeout it
+  reconnects for the next calls but does **not** retry the current one (avoids a
+  duplicated order). To retry anyway: `MCPClient(..., retry_tools=True)`. 401/403
+  (and other 4xx except 408/429) do not trigger reconnection.
+- **`timeout=` applies to the whole session**, including stdio — a stuck tool on
+  the server no longer hangs the client forever.
+- **Allowlist enforced at execution.** `run_agent(..., allowed_tools=[...])` (and
+  `Agent` with `mcp_allowed_tools`) only executes tools actually offered to the
+  model; any other name comes back as an error `tool_result`, not executed.
+- **SSE detected by the URL path** (`/sse?token=...` works).
+- **Sampling with approval.** `MCPClient(..., sampling_llm=llm, on_sampling_request=fn)`:
+  `fn(request)` (sync or async) returning `False` refuses the server's request.
+  `stopReason` reflects the real reason (`maxTokens`, `endTurn`, `toolUse`) and
+  `prompt_messages` keeps images.
+- **Secrets out of `repr`.** Token and headers no longer show up in
+  `repr(MCPClient)` or `repr(MCPServer)`.
+
+### Server: authentication and DNS-rebinding protection
+
+```python
+from jangada_ai import serve_mcp
+
+serve_mcp(
+    "my-tools", tools=[get_order],
+    transport="streamable-http", host="0.0.0.0", port=8000,
+    auth_token="secret",                        # requires Authorization: Bearer secret (401 otherwise)
+    allowed_hosts=["mcp.mycompany.com"],         # DNS-rebinding protection
+    allowed_origins=["https://app.mycompany.com"],
+)
+```
+
+`build_mcp_app(...)` takes the same `auth_token`/`allowed_hosts`/
+`allowed_origins`/`security_settings`. **Synchronous** tools (and a synchronous
+agent) run in a thread, without blocking other sessions. If the exposed `agent=`
+has `memory`, the library warns you: that memory is shared by every client.
+
 ## Example
 
 - `examples/mcp_example.py` — MCP client.

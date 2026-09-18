@@ -133,10 +133,25 @@ Chaves de API vêm de `api_key=`, da variável de ambiente do provider, ou de um
 arquivo `.env` detectado na importação. Precedência:
 `api_key=` explícito > variável de ambiente > `.env`.
 
+## Extras e ciclo de vida (1.9.0)
+
+Extras novos: `jangada-ai[ollama]` (provider Ollama) e `pypdfium2` dentro de
+`[files]` (PDF escaneado em vision). O `[mcp]` aceita `mcp` 1.x e 2.x, e o `[all]`
+inclui ollama e mcp.
+
+O `LLM` fecha as conexões HTTP do SDK com `close()`/`aclose()` ou como context
+manager — útil em workers e processos de vida longa:
+
+```python
+from jangada_ai import LLM
+
+async with LLM("openai", "gpt-5-mini") as llm:
+    print((await llm.acomplete("Oi!")).text)
+```
+
 ## Próximos passos
 
 - [Providers e chaves](/docs/providers)
 - [Structured output](/docs/structured-output)
 - [Documentos (docx/pdf/csv/xlsx)](/docs/documents)
 - [Retry e fallback](/docs/retry-fallback)
-

@@ -72,9 +72,9 @@ llm.complete("What's the dollar exchange rate today?", tools=[tavily_search])
 |------|-----------|
 | `calculator` | evaluates arithmetic expressions (safe, via `ast`) |
 | `current_datetime` | current date/time (IANA timezone) |
-| `fetch_url` | downloads a page and returns the readable text |
+| `fetch_url` | downloads a page and returns the readable text (blocks internal networks by default) |
 | `wikipedia_search` | Wikipedia summary (no key) |
-| `http_request` | generic HTTP request (GET/POST/...) |
+| `http_request` | generic HTTP request (GET/POST/...; blocks internal networks by default) |
 
 **With a key (read from the environment, or pass `api_key=`):**
 
@@ -96,6 +96,37 @@ retry with backoff**; once exhausted, the tool **returns an error message as tex
 See also [Structured output](/en/docs/structured-output) (which on Anthropic already uses
 tool-forcing under the hood) and [Observability](/en/docs/observability) (tool calls
 show up in the trace).
+
+## What changed in 1.9.0
+
+- **Parameter types.** `int | None` (Python 3.10+ syntax) now becomes the proper
+  optional type in the schema on Python 3.10–3.13 too; a `Union` of several types
+  becomes `anyOf`; a parameter annotated with a Pydantic `BaseModel` becomes the
+  model's schema, and `jangada_ai.coerce_args(fn, args)` turns the received dict
+  into the instance (`Agent` already does it for you). Annotations that fail to
+  resolve (broken forward ref) no longer break the whole function.
+- **Arguments with invalid JSON** no longer silently become `{}`: the `ToolCall`
+  carries `metadata["raw_arguments"]` and `metadata["args_error"] = True`.
+- **Native tools** (web search, code execution…) go in the same `tools=` list —
+  see [Native tools](/en/docs/native-tools).
+
+### Safer built-in tools
+
+- **`fetch_url` / `http_request` block internal networks by default.** Only
+  `http`/`https`; the host is resolved and loopback, private networks, link-local
+  (including the cloud metadata endpoint `169.254.169.254`), reserved and
+  multicast are refused — on every redirect too (max 5). The body is read up to
+  5 MB. This stops a prompt injection in a web page from making the agent read
+  your `.env` or your company network. To call an internal service on purpose:
+  `allow_private=True` on the call or the `JANGADA_HTTP_ALLOW_PRIVATE=1` env var.
+- **Network errors become a message for the model** (malformed URL, connection
+  reset, incomplete response) instead of an exception that breaks the loop.
+- **`fetch_url`** honours the server charset and decodes HTML entities.
+- **`calculator`** caps exponents (±1000) and number size (10k digits) —
+  `9**9**9` no longer hangs the process.
+- **Alphanumeric CNPJ.** `validar_cnpj`, `formatar_cnpj`, `validar_documento` and
+  `consultar_cnpj` accept the new Brazilian IRS format (letters in the first 12
+  positions, numeric check digits), e.g. `12.ABC.345/01DE-35`.
 
 ## Example
 

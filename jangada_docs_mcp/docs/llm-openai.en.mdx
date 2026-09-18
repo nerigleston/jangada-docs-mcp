@@ -41,6 +41,23 @@ llm = LLM("openai", "gpt-4o-mini")
   derived from `prompt_tokens`/`completion_tokens`), `raw` with the native object.
 - **Errors**: translated by `errors.classify()` into the normalized hierarchy.
 
+## What changed in 1.9.0
+
+- **Native tools → Responses API.** With `web_search()`, `file_search()`,
+  `code_execution()` (code interpreter), `image_generation()` or `computer_use()`
+  in `tools=`, the call goes through the Responses API (see
+  [Native tools](/en/docs/native-tools)). Without native tools it stays on
+  chat.completions.
+- **Strict structured output**: the schema now lists every property in
+  `required` (a strict-mode requirement), and the fallback to JSON mode covers
+  more "schema not supported" messages.
+- **Truncated output in `parse`** becomes `TruncatedError`; a `refusal` becomes
+  `OutputValidationError`.
+- **Usage**: `cache_read_tokens` (prompt caching) and `reasoning_tokens`
+  (reasoning models) in `usage`; the cost applies the cache discount.
+- **Batched embeddings**: large lists are split into several requests (`llm.embed(texts, batch_size=...)`).
+- **o-series (o1/o3/o4)** has a profile rule: `max_completion_tokens` and no sampling.
+
 ## Structured example
 
 ```python

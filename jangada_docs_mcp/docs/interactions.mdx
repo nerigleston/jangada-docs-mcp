@@ -1,0 +1,196 @@
+---
+title: "Gemini Interactions e Deep Research"
+description: "GeminiInteractions: Interactions API do Gemini (stateful com previous_interaction_id), streaming, loop de function calling e agentes gerenciados como o Deep Research em background com polling. Preview; exige google-genai>=2.3."
+---
+
+`GeminiInteractions` é uma camada fina e **específica do Gemini** sobre a
+[Interactions API](https://ai.google.dev/gemini-api/docs/interactions) do SDK
+`google-genai`. Ela é diferente do `LLM`:
+
+- **Stateful no servidor**: cada chamada devolve um `id`, e a próxima continua a
+  conversa com `previous_interaction_id`, sem reenviar o histórico.
+- É o único caminho para os **agentes gerenciados** do Google, como o **Deep
+  Research**, que planeja, pesquisa na web e escreve um relatório rodando em
+  background por vários minutos.
+
+> **Preview.** A Interactions API e os agentes estão em preview no Google:
+> nomes de agente e campos mudam com frequência. Exige
+> **`google-genai>=2.3`**. Com um SDK mais antigo, a jangada levanta
+> `UnsupportedError` pedindo a atualização.
+
+```bash
+pip install "jangada-ai[gemini]" "google-genai>=2.3"
+```
+
+Use `GEMINI_API_KEY` no ambiente (ou `api_key=`).
+
+```python
+from jangada_ai import GeminiInteractions
+
+gi = GeminiInteractions(model="gemini-3.8-flash")
+r = gi.create("Quem venceu a Copa do Mundo de 2002?", tools=[{"type": "google_search"}])
+print(r.text)
+for c in r.citations:
+    print("-", c["title"], c["url"])
+
+# continua a conversa no servidor, sem reenviar histórico
+r2 = gi.create("E o artilheiro?", previous_interaction_id=r.id)
+```
+
+## Quando usar `GeminiInteractions` e quando usar `LLM`
+
+- **`LLM("gemini", ...)`**: o caminho padrão. Troca de provider sem mudar o
+  código, retry, fallback, cache, guardrails. Tools nativas do Gemini também
+  funcionam por lá (ver [Tools nativas](/docs/native-tools)).
+- **`GeminiInteractions`**: quando você quer o **estado no servidor**
+  (`previous_interaction_id`), **agentes gerenciados** (Deep Research) ou tarefas
+  longas em **background** com polling. Não tem retry nem fallback: é uma
+  camada fina.
+
+## API
+
+```python
+GeminiInteractions(api_key=None, *, model=None, vertexai=False, **client_kwargs)
+```
+
+| Método (sync / async) | O que faz |
+|---|---|
+| `create` / `acreate(input, *, model, agent, agent_config, tools, system, previous_interaction_id, store, background, response_format, tool_choice, max_tokens, seed, stop, thinking_level, **extra)` | Cria uma interação (ou dispara um agente) |
+| `stream` / `astream(input, ...)` | Mesmo que `create`, produzindo `InteractionEvent` |
+| `resume_stream` / `aresume_stream(id, last_event_id=)` | Retoma um stream interrompido |
+| `get` / `aget(id)` | Busca o estado atual |
+| `cancel` / `acancel(id)` | Cancela |
+| `delete` / `adelete(id)` | Apaga |
+| `wait` / `await_(target, *, poll_interval=10, timeout=None, on_update=None)` | Polling até sair de `queued`/`in_progress` |
+| `run` / `arun(input, *, tools=[...], max_iterations=10, on_tool_call=, on_tool_result=)` | Loop de function calling com execução local |
+| `deep_research` / `adeep_research(prompt, *, agent=DEEP_RESEARCH_AGENT, wait=True, ...)` | Dispara o Deep Research em background |
+
+`close()`/`aclose()` fecham o cliente.
+
+### `InteractionResult`
+
+- `id`, `status` (`queued`, `in_progress`, `requires_action`, `completed`,
+  `failed`, `cancelled`, `incomplete`, `budget_exceeded`), `done`,
+  `requires_action`.
+- `text`: texto final.
+- `steps`: passos normalizados (dicts: `model_output`, `thought`,
+  `function_call`, `google_search_call`...).
+- `citations`: lista de dicts `{url, title, start, end}`.
+- `function_calls`: chamadas pendentes
+  (`InteractionFunctionCall(id, name, args)`, com
+  `.result(output, is_error=False)` para montar a resposta).
+- `usage`, `cost`, `parsed` (com `response_format`), `errors`, `raw`.
+- Preenchidos pelo `run`: `tool_trace`, `iterations`, `stopped_by_limit`,
+  `usage_total`, `cost_total`, `cost_complete`.
+- `raise_for_status()`: levanta `ProviderError` se terminou em `failed`,
+  `cancelled` ou `budget_exceeded`.
+
+## Tools
+
+`tools=` aceita:
+
+- **suas funções** (callables, modelos Pydantic, `Tool`), que viram
+  `{"type": "function", ...}`;
+- **dicts nativos** da API: `{"type": "google_search"}`, `url_context`,
+  `code_execution`, `file_search`, `google_maps`, `mcp_server`...;
+- os **`NativeTool`** canônicos da jangada (`web_search()`, `url_context()`,
+  `code_execution()`, `file_search(...)`, `google_maps(...)`) e
+  `native_tool("gemini", spec)`. `image_generation` e tools de outro provider
+  levantam `UnsupportedError`.
+
+### Function calling com execução local (`run`)
+
+O `run` cria a interação, executa localmente as funções que o modelo pedir e
+responde com `previous_interaction_id`, até a resposta final ou
+`max_iterations`. Uma tool que falha, que não existe ou que é vetada por
+`on_tool_call` (devolvendo `False`) vira um resultado com `is_error`, e o modelo
+pode reagir.
+
+```python
+def cotacao(moeda: str) -> float:
+    """Cotação da moeda em reais."""
+    return {"USD": 5.4, "EUR": 5.9}.get(moeda.upper(), 0.0)
+
+r = gi.run("Quanto custam 100 dólares em reais?", tools=[cotacao])
+print(r.text, [t["name"] for t in r.tool_trace], r.cost_total)
+```
+
+Para controlar o loop à mão, use `create` e responda a `r.function_calls`:
+
+```python
+r = gi.create("Quanto custam 100 dólares?", tools=[cotacao])
+if r.requires_action:
+    respostas = [c.result(cotacao(**c.args)) for c in r.function_calls]
+    r = gi.create(respostas, previous_interaction_id=r.id, tools=[cotacao])
+```
+
+## Structured output
+
+```python
+from pydantic import BaseModel
+
+class Resumo(BaseModel):
+    titulo: str
+    pontos: list[str]
+
+r = gi.create("Resuma a história do frevo.", response_format=Resumo)
+print(r.parsed)            # Resumo(...); se não validar, OutputValidationError
+```
+
+## Streaming
+
+`stream` produz `InteractionEvent(type, text, status, step, usage, result, ...)`,
+com `type` em `created`, `status`, `step_start`, `text`, `thought`, `delta`,
+`step_stop`, `completed` (com `.result` final) e `error` (levanta
+`ProviderError`).
+
+```python
+for ev in gi.stream("Explique RAG em uma frase."):
+    if ev.type == "text":
+        print(ev.text, end="", flush=True)
+```
+
+## Deep Research (background)
+
+```python
+rel = gi.deep_research(
+    "Panorama do mercado de LLMs open-source em 2026, em 5 tópicos.",
+    on_update=lambda x: print("status:", x.status),
+    timeout=1800,
+)
+print(rel.text)
+```
+
+- Roda com `background=True` e `store=True` (a API exige `store` com
+  background) e faz polling a cada 10 s.
+- `wait=False` devolve logo o `InteractionResult` em `queued`/`in_progress`;
+  depois use `gi.wait(r)` ou `gi.get(r.id)`.
+- `timeout` estourado → `APITimeoutError`. A interação **continua rodando** no
+  servidor; você pode retomar com `wait`/`get`.
+- O agente padrão é `DEEP_RESEARCH_AGENT` (`"deep-research-preview-04-2026"`).
+  Outros agentes vão em `agent=` (ex.: `"deep-research-max-preview-04-2026"`,
+  `"antigravity-preview-05-2026"`), com `agent_config=` repassado como veio.
+- Leva minutos e consome muitos tokens (100 mil a milhões por tarefa): use com
+  consciência de custo.
+
+## Usage e custo
+
+O usage segue o contrato da lib: `input_tokens` (total de input + tokens de uso
+de tool), `output_tokens` (output + thoughts), `reasoning_tokens`,
+`cache_read_tokens`, `server_tool_requests` e `total_tokens`. O custo é
+calculado quando há `model=`. Com `agent=` ele fica `None`, porque não há
+tabela de preço por agente.
+
+## Limitações
+
+- `temperature`, `top_p` e `top_k` **não existem** na Interactions API: são
+  ignorados (com log em nível debug). `max_tokens`, `seed`, `stop` e
+  `thinking_level` funcionam.
+- Sem retry, fallback, cache ou guardrails (use o `LLM` para isso).
+- `stream` não roda o loop de tools (`run`).
+- **Vertex AI** (`vertexai=True`): o SDK roteia, mas a doc do Google ainda não
+  confirma a disponibilidade.
+- Retenção no Google: 55 dias (pago) ou 1 dia (free).
+
+Relacionado: [Gemini](/docs/llm-gemini), [Tools nativas](/docs/native-tools),
+[Agentes e times](/docs/agents).

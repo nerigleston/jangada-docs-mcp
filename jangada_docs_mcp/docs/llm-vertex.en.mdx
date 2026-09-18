@@ -58,3 +58,13 @@ IAM, billing and governance** (and per-region data residency), instead of the
 direct Gemini API key. The code is identical to Gemini — swap
 `LLM("gemini", ...)` for `LLM("vertex", ...)`. See [Gemini](/en/docs/llm-gemini)
 and [Providers](/en/docs/providers).
+
+## What changed in 1.9.0
+
+- For `gemini-3*` models without an explicit `location=`, the library uses
+  `location="global"` (3.x models are usually not in `us-central1`); an explicit
+  `location=` always wins.
+- Vertex inherits the Gemini profile rules (e.g. `thinking_budget` →
+  `thinking_level` on 3.x).
+- Native tools work, but **mixing** a native tool with a function tool raises
+  `UnsupportedError` (the field that allows it only exists in the Gemini API).

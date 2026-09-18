@@ -178,3 +178,25 @@ Em [app.jangada.dev.br](https://app.jangada.dev.br) você acompanha tudo:
 - Reusar o mesmo id de lote (via `observability_session(id=...)`) **acrescenta**
   observations ao mesmo trace de forma idempotente no backend.
 - Os campos de custo/tokens vêm de [Custo e tokens](/docs/cost).
+
+## O que mudou na 1.9.0
+
+- **Falhas também viram trace.** Quando uma chamada esgota retry e fallback, a lib
+  envia uma observation com `status="ERROR"` e o erro (tipo + mensagem, truncado)
+  — antes só os sucessos apareciam no dashboard. Para reportar manualmente:
+  `jangada_ai.observability.auto_report_error(erro, provider=..., model=...)`.
+- **Início real da chamada.** `startedAt` agora marca quando a chamada começou (não
+  quando terminou); `auto_report(..., started_at=...)` aceita epoch ou `datetime`.
+- **Stream e transcrição reportados.** `stream`/`astream` enviam o texto acumulado
+  ao final (capability `streaming`); `transcribe` também reporta (`audio`). Hits de
+  cache ganham a capability `cache`.
+- **Envio com fila limitada.** Em vez de uma thread por chamada, há uma fila (1000
+  eventos) com poucos workers; se o endpoint ficar lento e a fila encher, os
+  eventos excedentes são descartados — `dropped_count()` diz quantos. `flush()` e o
+  `atexit` esperam a fila esvaziar com prazo.
+- **Só HTTPS.** O endpoint (e o do `feedback`) precisa ser `https://` (`http` só em
+  localhost), para a chave e os prompts não trafegarem em claro.
+- **Output truncado** como o input, e `embed` não envia mais todos os vetores (só
+  dimensões e contagem acima de um teto).
+- Falhas de envio vão para o log `DEBUG` do logger `jangada_ai` (nunca derrubam a
+  chamada).

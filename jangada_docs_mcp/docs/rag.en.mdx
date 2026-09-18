@@ -250,6 +250,48 @@ chunk_text(text, size=1000, overlap=200)   # splits without cutting words
 Related: [Documents](/en/docs/documents) (text extraction reused in RAG)
 and [Observability](/en/docs/observability).
 
+## What changed in 1.9.0
+
+- **Full async API**: `aadd_texts`, `aadd_document`, `async_texts`,
+  `async_document`, `asearch` and `aask` (using `aembed`/`acomplete`; the store
+  runs in a thread). `Reranker` gained `arerank`, and there are
+  `aexpand_queries`/`acompress_results`.
+- **Hybrid search fixed on pgvector/Mongo.** Fusion (RRF) used object identity
+  and, on those databases, never merged the same chunk coming from both searches —
+  it returned duplicates. It now uses a stable key (id → document+hash → content).
+- **`min_score` in hybrid mode** filters by **vector similarity** (before
+  fusion), not by the RRF score (which stays near 0.03 and emptied the results).
+- **The in-memory index is no longer mutated by searches**: `parent_document`
+  and `compress=True` work on copies.
+- **The default prompt** wraps the retrieved context in `<contexto>` tags and
+  tells the model to treat it as data, not instructions (mitigates prompt
+  injection coming from documents). Custom prompts with literal braces (e.g. a
+  JSON example) no longer break.
+- **Embeddings in batches** of 128 texts (the OpenAI/Azure/OpenRouter and Mistral
+  adapters also split), so large PDFs don't exceed the provider limit.
+- **pgvector**:
+  - models above 2000 dimensions (e.g. `gemini-embedding-001`,
+    `text-embedding-3-large`, 3072) are indexed via `halfvec` (requires pgvector
+    ≥ 0.7), up to 4000; above that the table has no HNSW index, with a warning;
+  - `add()`/`add_texts` return how many chunks were **actually** inserted
+    (duplicates by document+hash are dropped);
+  - embeddings are computed outside the transaction and the advisory lock, the
+    connection is lock-protected across threads, and there is `close()` +
+    `with PgVectorStore(...)`;
+  - the table name is validated (accepts `schema.table`).
+- **Mongo Atlas**: stores the chunk `hash`, accepts `filter_fields=[...]` (metadata
+  fields declared as `filter` in the index — required for `filter=` in searches),
+  falls back to client-side search only on Atlas errors (with a warning) and has
+  `close()` + a context manager.
+
+```python
+store = vector_store("postgresql://...", table="docs", text_config="english")
+with store:
+    rag = RAG(chat=LLM("openai", "gpt-5-mini"), embedder=LLM("openai", "text-embedding-3-small"), store=store)
+    await rag.aadd_document("manual.pdf")
+    resp = await rag.aask("What is the warranty period?", min_score=0.3)  # min_score = cosine
+```
+
 ## Example
 
 `examples/rag_example.py` — executable script.

@@ -74,6 +74,24 @@ measure `max(branches)` vs `t_join` directly, the diagnostic that matters in a f
 for observability. Details in [Cost and tokens](/en/docs/cost) and, to inspect
 step by step, [Debug](/en/docs/debug).
 
+## What changed in 1.9.0
+
+- **`Flow.arun(**context)`**: async version of `Flow`.
+- **`Graph(max_steps=50)`**: cap on nodes executed in a `run`; a cyclic router
+  that never ends raises `RuntimeError` instead of spending without limit.
+- **A revisited node** (cycle) or a step with a repeated name no longer
+  overwrites the previous one: visits show up as `name#2`, `name#3` in
+  `completions`/`durations`, and `usage`/`cost` add them all up. `parsed("name")`
+  returns the last visit.
+- **Parallel branches with `on_error="raise"`**: when a branch fails, the pending
+  sibling branches are cancelled (they used to keep running and spending tokens).
+- **Reserved names.** Nodes, steps, branches and context variables can't be
+  called `system`, `history`, `params`, `tools`, `tool_choice`, `files`,
+  `images`, `schema`, `prompt`, `mcp_servers` or `self` — they clashed with
+  `complete`'s arguments and caused odd errors. They now raise `ValueError` right away.
+- `then()`/`route()` on a parallel block raise an error (they used to be silently
+  ignored); a `join` pointing to a missing node has its own message.
+
 ## Example
 
 `examples/graph_example.py` — runnable script.

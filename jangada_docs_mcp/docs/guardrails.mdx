@@ -94,3 +94,18 @@ class MaxLength(Guardrail):
         texto = " ".join(m.content for m in messages if isinstance(m.content, str))
         return GuardResult(len(texto) <= self.limite, "excedeu o limite")
 ```
+
+## O que mudou na 1.9.0
+
+- **Seguro em chamadas concorrentes.** O controle que impede o judge de disparar os
+  guardrails de novo agora é por contexto (`ContextVar`), não um atributo do `LLM`.
+  Antes, com `asyncio.gather` ou threads usando o mesmo `LLM`, uma chamada podia
+  **pular todos os guardrails** enquanto outra esperava o judge.
+- **`ScopeGuard(check_history=False)`** (padrão): checa só o que chegou depois da
+  última fala do assistant — a mensagem nova do usuário e resultados de tool
+  novos. Um termo bloqueado lá atrás no histórico não trava mais a conversa para
+  sempre, e o loop de um agente não rejulga o histórico inteiro a cada iteração.
+  Use `check_history=True` para o comportamento antigo.
+- **Resultados de tool** (role `tool`) passam pela blocklist.
+- **Recusa na saída preserva o custo**: quando o guard de output barra, a recusa
+  traz o `usage`/`cost` da chamada que já foi paga.

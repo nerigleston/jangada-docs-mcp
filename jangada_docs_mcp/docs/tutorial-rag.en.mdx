@@ -71,6 +71,19 @@ rag = RAG(embedder, store, chat=chat)
 The rest of the code stays the same. Fine-tuning (`min_score`, `filter`,
 `weights`, `max_context_chars`) is in [RAG](/en/docs/rag).
 
+## Async version (1.9.0+)
+
+The whole flow has an async counterpart — handy in APIs (FastAPI) and to index
+many documents without blocking the event loop:
+
+```python
+await rag.aadd_document("policy.pdf")
+resp = await rag.aask("Can I return it after 30 days?")
+```
+
+In hybrid mode (the default), `min_score` is compared with the vector search
+**cosine similarity** — values like `0.3`–`0.5` make sense.
+
 ## Next steps
 
 - Complete recipe: `examples/cookbook/03_chatbot_rag.py`.

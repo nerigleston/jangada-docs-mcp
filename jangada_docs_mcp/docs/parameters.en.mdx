@@ -78,6 +78,26 @@ model with a different contract, add a rule in `profiles.py` instead of scatteri
 
 See [Providers](/en/docs/providers) and [Extending](/en/docs/extending).
 
+## What changed in 1.9.0
+
+- **`profile_model=`**: when `model` is not the real model name (e.g. the
+  deployment name on Azure), tell the library the base model so it applies the
+  right rules: `LLM("azure", "my-deploy", profile_model="gpt-5")` drops
+  `temperature` and uses `max_completion_tokens`, as for gpt-5. It is not sent to
+  the SDK.
+- **Profile aliases**: `vertex` inherits the `gemini` rules and `azure` the
+  `openai` ones. For your own provider:
+  `jangada_ai.profiles.register_alias("mine", "openai")`.
+- **o-series (o1/o3/o4)**: `max_tokens` becomes `max_completion_tokens` and
+  sampling is removed, as for gpt-5.
+- **`thinking_budget` on Gemini 3.x** is graduated: up to 1024 → `LOW`, up to
+  8192 → `MEDIUM` (Flash models only), above → `HIGH`. On `gemini-2.5-pro`,
+  `thinking_level="MINIMAL"` becomes 128 (the minimum accepted), not 0.
+- **Removing a parameter** in a derived `LLM`:
+  `llm.with_params(temperature=REMOVE)` (`from jangada_ai import REMOVE`); `None`
+  is still ignored.
+- A negative `max_retries` raises `ValueError` when creating the `LLM`.
+
 ## Example
 
 `examples/model_profiles_example.py` — runnable script.

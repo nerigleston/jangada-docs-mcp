@@ -58,3 +58,13 @@ governança do GCP** (e residência de dados por região), em vez da chave de AP
 Gemini direto. O código é idêntico ao do Gemini — troque `LLM("gemini", ...)` por
 `LLM("vertex", ...)`. Veja [Gemini](/docs/llm-gemini) e
 [Providers](/docs/providers).
+
+## O que mudou na 1.9.0
+
+- Para modelos `gemini-3*` sem `location=` explícito, a lib usa `location="global"`
+  (os modelos 3.x costumam não estar em `us-central1`); `location=` explícito
+  sempre vence.
+- O Vertex herda as regras de perfil do Gemini (ex.: `thinking_budget` →
+  `thinking_level` no 3.x).
+- Tools nativas funcionam, mas **misturar** tool nativa com function tool levanta
+  `UnsupportedError` (o campo que permite isso só existe na Gemini API).
