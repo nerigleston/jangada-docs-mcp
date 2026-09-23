@@ -22,7 +22,9 @@ llm = LLM("anthropic", "claude-opus-4-8")
 - **Text** and **streaming**.
 - **Structured output** (`parse`): via **tool-forcing** — it defines a tool
   with the schema and pins `tool_choice`, then validates the `tool_use.input`
-  against the Pydantic model. (Claude has no `response_format` like OpenAI.)
+  against the Pydantic model. (Claude has no `response_format` like OpenAI.) On
+  models that **don't accept forced tool use** (Opus 5.5 and Fable 5.1), `parse`
+  automatically uses `tool_choice="auto"` + **strict tool use** — transparent to you.
 - **Vision** (`images=`): images become an `image` block with a base64 `source`.
 - **Documents** (`files=`): local text extraction.
 
@@ -49,6 +51,19 @@ llm = LLM("anthropic", "claude-opus-4-8")
 
 Related: [Capability matrix](/en/docs/capabilities),
 [Structured output](/en/docs/structured-output).
+
+## What changed in 1.9.2
+
+- **Compatible with Claude Opus 5.5 and Fable 5.1** (released 2026-09-22). These
+  models bring a breaking change: **forced tool use is no longer accepted**
+  (`tool_choice` `"tool"`/`"any"` → 400). Since structured output used
+  tool-forcing, `parse` broke on them. Now, on those models only, `parse` uses
+  `tool_choice="auto"` + strict tool use (the migration Anthropic recommends); every
+  other Claude model keeps the tool-forcing path. It's transparent — you call
+  `LLM("anthropic", "claude-opus-5-5").parse(...)` as usual.
+- **`complete(tools=…, tool_choice="required"`** (or `"any"`/a name) on Opus 5.5 /
+  Fable 5.1 now raises a clear `UnsupportedError` instead of letting the API return
+  a raw 400. Use `tool_choice="auto"`.
 
 ## What changed in 1.9.0
 
