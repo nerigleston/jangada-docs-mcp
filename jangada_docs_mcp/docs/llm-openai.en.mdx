@@ -48,6 +48,10 @@ llm = LLM("openai", "gpt-4o-mini")
   in `tools=`, the call goes through the Responses API (see
   [Native tools](/en/docs/native-tools)). Without native tools it stays on
   chat.completions.
+- **Model that refuses function tools on chat.completions → Responses API.** Some
+  new models (e.g. `gpt-5.6-luna`) refuse `tools=` on chat.completions and ask for
+  the Responses API. Jangada switches route on the first refusal and remembers the
+  model — later tool calls go straight there. Nothing changes on your side.
 - **Strict structured output**: the schema now lists every property in
   `required` (a strict-mode requirement), and the fallback to JSON mode covers
   more "schema not supported" messages.

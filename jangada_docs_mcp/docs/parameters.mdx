@@ -46,7 +46,8 @@ Parâmetros específicos de um SDK que não têm nome canônico vão via `extra=
 Modelos do mesmo provider às vezes têm contratos diferentes. A jangada normaliza
 isso em `profiles.py`, **por modelo**, sem você precisar saber:
 
-- `gpt-5` rejeita `temperature` (HTTP 400) e exige `max_completion_tokens`.
+- `gpt-5` **em diante** (`gpt-5.x`, `gpt-6-*`…, exceto os `*-chat-*`) rejeita
+  `temperature` (HTTP 400) e exige `max_completion_tokens`.
 - `gemini-3.x` descarta `temperature`/`top_p`/`top_k`.
 - **Thinking do Gemini**: você passa só `thinking_budget` (ou `thinking_level`) e
   a lib adapta — no 2.5 vira `thinking_budget`, no 3.x vira `thinking_level` —,

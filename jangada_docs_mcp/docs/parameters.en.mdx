@@ -46,7 +46,8 @@ SDK-specific parameters that have no canonical name go via `extra=`.
 Models from the same provider sometimes have different contracts. jangada normalizes
 this in `profiles.py`, **per model**, without you needing to know:
 
-- `gpt-5` rejects `temperature` (HTTP 400) and requires `max_completion_tokens`.
+- `gpt-5` **and later** (`gpt-5.x`, `gpt-6-*`…, except the `*-chat-*` ones) rejects
+  `temperature` (HTTP 400) and requires `max_completion_tokens`.
 - `gemini-3.x` discards `temperature`/`top_p`/`top_k`.
 - **Gemini thinking**: you pass only `thinking_budget` (or `thinking_level`) and
   the library adapts — on 2.5 it becomes `thinking_budget`, on 3.x it becomes

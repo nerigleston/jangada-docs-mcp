@@ -47,6 +47,10 @@ llm = LLM("openai", "gpt-4o-mini")
   `code_execution()` (code interpreter), `image_generation()` ou `computer_use()`
   em `tools=`, a chamada vai pela Responses API (veja [Tools nativas](/docs/native-tools)).
   Sem tools nativas, continua no chat.completions.
+- **Modelo que recusa function tools no chat.completions → Responses API.** Alguns
+  modelos novos (ex.: `gpt-5.6-luna`) recusam `tools=` no chat.completions e pedem a
+  Responses API. A jangada troca de rota sozinha na primeira recusa e lembra do
+  modelo — as próximas chamadas com tools já vão direto. Você não muda nada.
 - **Structured output strict**: o schema passa a listar todas as propriedades em
   `required` (exigência do modo strict), e o fallback para JSON mode cobre mais
   mensagens de "schema não suportado".
