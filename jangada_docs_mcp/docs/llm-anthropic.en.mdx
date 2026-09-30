@@ -23,9 +23,9 @@ llm = LLM("anthropic", "claude-opus-4-8")
 - **Structured output** (`parse`): via **tool-forcing** — it defines a tool
   with the schema and pins `tool_choice`, then validates the `tool_use.input`
   against the Pydantic model. (Claude has no `response_format` like OpenAI.) On
-  models that **don't accept forced tool use** (Opus 5.5, Fable 5.1 and Mythos 5.1),
-  `parse` automatically uses `tool_choice="auto"` + **strict tool use** — transparent
-  to you. See "What changed in 1.9.2".
+  models that **don't accept forced tool use** (Opus 5.5, Sonnet 5.5, Fable 5.1 and
+  Mythos 5.1), `parse` automatically uses `tool_choice="auto"` + **strict tool use** —
+  transparent to you. See "What changed in 1.9.3".
 - **Vision** (`images=`): images become an `image` block with a base64 `source`.
 - **Documents** (`files=`): local text extraction.
 
@@ -52,6 +52,16 @@ llm = LLM("anthropic", "claude-opus-4-8")
 
 Related: [Capability matrix](/en/docs/capabilities),
 [Structured output](/en/docs/structured-output).
+
+## What changed in 1.9.3
+
+- **Compatible with Claude Sonnet 5.5** (`claude-sonnet-5-5`, released 2026-09-28).
+  Like Opus 5.5, Sonnet 5.5 brings the **forced tool use is no longer accepted**
+  breaking change (`tool_choice` `"tool"`/`"any"` → 400). `parse` now uses
+  `tool_choice="auto"` + strict tool use on this model too — transparent: just call
+  `LLM("anthropic", "claude-sonnet-5-5").parse(...)` as usual. Forcing a tool via
+  `complete(tools=…, tool_choice="required")` (or `"any"`/a name) on Sonnet 5.5 raises
+  a clear `UnsupportedError`. Pricing unchanged (US$2/US$10, same as Sonnet 5).
 
 ## What changed in 1.9.2
 
