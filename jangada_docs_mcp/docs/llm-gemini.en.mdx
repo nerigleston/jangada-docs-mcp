@@ -37,7 +37,8 @@ llm = LLM("gemini", "gemini-2.5-flash")
 - **Canonical parameters → config**: `max_tokens`→`max_output_tokens`,
   `stop`→`stop_sequences`; `temperature`/`top_p`/`top_k`/`seed` pass through.
   It is the only provider with `top_k`.
-- **Model profile** (`profiles.py`): `gemini-3.x` drops sampling
+- **Model profile** (`profiles.py`): `gemini-3.x` **and up (including
+  `gemini-4-argon`, GA 2026-10-13)** drops sampling
   (`temperature`/`top_p`/`top_k`). See
   [Parameters and profiles](/en/docs/parameters).
 - **Multi-turn function calling in 3.x — *thought signatures* (handled by the
@@ -54,7 +55,7 @@ llm = LLM("gemini", "gemini-2.5-flash")
 ## Thinking — you pass only `thinking_budget`
 
 Gemini has two incompatible conventions: **2.5** only accepts `thinking_budget`
-(in tokens) and **3.x** only accepts `thinking_level` (`LOW`/`HIGH`) — mixing them
+(in tokens) and **3.x and up** (3.x and `gemini-4-argon`) only accepts `thinking_level` (`LOW`/`HIGH`) — mixing them
 returns HTTP 400. jangada handles this for you: pass **`thinking_budget`** (or
 `thinking_level`) and the library adapts to the model, wrapping it in the native
 `thinking_config` under the hood.
