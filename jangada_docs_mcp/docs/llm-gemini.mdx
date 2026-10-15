@@ -37,7 +37,7 @@ llm = LLM("gemini", "gemini-2.5-flash")
 - **Parâmetros canônicos → config**: `max_tokens`→`max_output_tokens`,
   `stop`→`stop_sequences`; `temperature`/`top_p`/`top_k`/`seed` passam direto.
   É o único provider com `top_k`.
-- **Perfil de modelo** (`profiles.py`): `gemini-3.x` descarta sampling
+- **Perfil de modelo** (`profiles.py`): `gemini-3.x` **em diante (inclui o `gemini-4-argon`, GA 2026-10-13)** descarta sampling
   (`temperature`/`top_p`/`top_k`). Veja [Parâmetros e perfis](/docs/parameters).
 - **Function calling multi-turno no 3.x — *thought signatures* (resolvido pela
   lib)**: o Gemini 3.x anexa um `thought_signature` opaco a cada function call e
@@ -52,7 +52,7 @@ llm = LLM("gemini", "gemini-2.5-flash")
 ## Thinking (raciocínio) — você passa só `thinking_budget`
 
 O Gemini tem duas convenções incompatíveis: o **2.5** só aceita `thinking_budget`
-(em tokens) e o **3.x** só aceita `thinking_level` (`LOW`/`HIGH`) — misturar dá
+(em tokens) e o **3.x em diante** (3.x e o `gemini-4-argon`) só aceita `thinking_level` (`LOW`/`HIGH`) — misturar dá
 HTTP 400. A jangada resolve isso por você: passe **`thinking_budget`** (ou
 `thinking_level`) e a lib adapta ao modelo, empacotando no `thinking_config`
 nativo por baixo dos panos.
