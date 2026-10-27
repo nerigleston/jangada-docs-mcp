@@ -289,6 +289,21 @@ Expose an `Agent` (becomes the `ask` tool):
 serve_mcp("support", agent=Agent(LLM("openai", "gpt-4o-mini"), role="support"))
 ```
 
+Server name and icon: `title`, `version`, `website_url` and `icons` go into the
+handshake's `serverInfo` — clients such as Claude use them for the connector's
+name and icon:
+
+```python
+serve_mcp(
+    "my-calc", tools=[add],
+    title="My Calculator", version="1.0.0", website_url="https://example.com",
+    icons=[{"src": "https://example.com/icon.png", "mimeType": "image/png", "sizes": ["96x96"]}],
+)
+```
+
+`icons` accepts URLs (`str`) or dicts in the protocol format. With `mcp` 1.x,
+`title` is ignored with a warning (the 1.x server has no such field).
+
 Over HTTP (streamable-http) or mounted in your ASGI app:
 
 ```python
