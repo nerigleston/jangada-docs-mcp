@@ -303,6 +303,53 @@ Extra `jangada-ai[mcp]` (HTTP also needs `starlette` + `uvicorn`).
 serves all of jangada's docs to your editor (Claude Code/Desktop/Cursor) — no
 clone: `uvx --from git+https://github.com/nerigleston/jangada-docs-mcp jangada-docs-mcp`.
 
+### Code Mode (large catalogs)
+
+With many tools, listing all of them in every conversation fills the model's
+context, and chaining calls costs one round trip (plus the intermediate results)
+per step. `code_mode=True` replaces the catalog with **three meta-tools**, the same
+pattern as Cloudflare's/FastMCP's Code Mode:
+
+| Tool | What it does |
+|------|--------------|
+| `search(query, limit, detail)` | Finds tools by text (BM25 over name + description). |
+| `get_schema(tool_names, detail)` | Parameters of the chosen tools (`brief`/`detailed`/`full`). |
+| `execute(code)` | Runs Python in a **sandbox** that calls the tools via `await call_tool(name, params)`. |
+
+```python
+from jangada_ai import CodeMode, serve_mcp
+
+serve_mcp("shop", tools=[get_customer, list_orders, cancel_order], code_mode=True)
+
+# sandbox limits / no discovery step (catalog goes into the execute description)
+serve_mcp("shop", tools=[...], code_mode=CodeMode(limits={"max_feed_duration_secs": 10}))
+serve_mcp("shop", tools=[...], code_mode=CodeMode(discovery=False))
+```
+
+The client can then filter and aggregate **inside** the server in a single trip:
+
+```python
+c = await call_tool("get_customer", {"customer_id": 7})
+orders = await call_tool("list_orders", {"customer_id": 7})
+print("orders:", len(orders))
+return {"customer": c["name"], "total": sum(o["amount"] for o in orders)}
+```
+
+- **Sandbox:** [Monty](https://github.com/pydantic/monty) (`pydantic-monty`), a
+  Python interpreter written in Rust, isolated in a subprocess — **no** filesystem,
+  network or environment variables; it only reaches your tools through `call_tool`.
+  Default limits: 30 s and 100 MB per `execute` (`limits=` takes Monty's keys, e.g.
+  `max_feed_duration_secs`, `max_memory`, `max_recursion_depth`). `asyncio.gather`
+  runs calls in parallel.
+- **Return:** the `return` value (or the last expression) + whatever was `print`ed.
+  Code errors (exception, timeout, syntax) come back as an error result with the
+  traceback; a tool error can be handled with `try/except` inside the code.
+- Sync tools still run in a thread; Pydantic/`Completion` returns become
+  dict/text. Also works in `build_mcp_server`/`build_mcp_app` (`code_mode=`).
+- Extra **`jangada-ai[code-mode]`** (= `mcp` + `pydantic-monty`).
+- Worth it with **many tools** or flows that chain several calls; with 3–4 simple
+  tools, the normal mode is usually more direct.
+
 ## What changed in 1.9.0
 
 - **Compatible with `mcp` 1.x and 2.x.** The `[mcp]` extra now accepts
