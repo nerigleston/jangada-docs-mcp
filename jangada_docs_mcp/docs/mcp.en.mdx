@@ -410,6 +410,26 @@ return {"customer": c["name"], "total": sum(o["amount"] for o in orders)}
 - **Secrets out of `repr`.** Token and headers no longer show up in
   `repr(MCPClient)` or `repr(MCPServer)`.
 
+### Human in the loop: tools that change data
+
+Mark tools with `annotations` (from the MCP protocol) so the client knows which ones
+change data; Claude and ChatGPT ask the user for confirmation before those calls:
+
+```python
+from jangada_ai.tools import Tool, to_tool
+
+delete = to_tool(delete_order)
+delete.annotations = {"readOnlyHint": False, "destructiveHint": True}
+```
+
+With Code Mode, a tool called **inside** `execute` skips that confirmation (the user
+approves `execute` once). Keep data-changing tools out of the sandbox with `direct=`;
+they show up as regular tools and every call is approved:
+
+```python
+CodeMode(direct=["delete_order", "create_order"], execute_annotations={"readOnlyHint": True})
+```
+
 ### Server: authentication and DNS-rebinding protection
 
 ```python
