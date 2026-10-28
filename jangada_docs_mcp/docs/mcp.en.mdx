@@ -338,6 +338,22 @@ filter applies inside them: `search` won't find it, `get_schema` won't describe 
 the sandbox's `call_tool` refuses it. Use `stateless=True` so each request runs in its
 own context.
 
+Likewise, `tool_description=` adjusts each tool's description per request
+(e.g. tenant instructions). It receives `(name, description)` and returns the
+description to show, or `None` to keep the original; it applies to `tools/list`
+and to `search`/`get_schema`:
+
+```python
+instructions: ContextVar[dict[str, str]] = ContextVar("instructions", default={})
+
+def describe(name: str, desc: str) -> str | None:
+    extra = instructions.get().get(name)
+    return f"{desc}\n\nThis company's instructions: {extra}" if extra else None
+
+app = build_mcp_app("erp", tools=[...], stateless=True, tool_filter=allowed.get,
+                    tool_description=describe)
+```
+
 ### Code Mode (large catalogs)
 
 With many tools, listing all of them in every conversation fills the model's
