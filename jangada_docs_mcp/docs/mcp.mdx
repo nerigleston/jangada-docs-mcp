@@ -317,6 +317,25 @@ Extra `jangada-ai[mcp]` (HTTP também precisa de `starlette` + `uvicorn`).
 serve toda a doc do jangada ao seu editor (Claude Code/Desktop/Cursor) — sem
 clonar: `uvx --from git+https://github.com/nerigleston/jangada-docs-mcp jangada-docs-mcp`.
 
+### Permissões por requisição (`tool_filter`)
+
+Num servidor HTTP com vários usuários, `tool_filter=` decide a cada requisição quais
+tools aparecem. É uma função sem argumentos que devolve os nomes liberados (ou `None`
+para todas); normalmente lê um `ContextVar` posto pelo seu middleware de autenticação:
+
+```python
+from contextvars import ContextVar
+
+liberadas: ContextVar[set[str] | None] = ContextVar("liberadas", default=None)
+app = build_mcp_app("erp", tools=[...], stateless=True, tool_filter=liberadas.get)
+# no middleware: liberadas.set({"listar_vendas", "listar_produtos"}) antes de chamar o app
+```
+
+A tool fora da lista some do `tools/list` e responde como desconhecida no `tools/call`.
+Com `code_mode`, `search`/`get_schema`/`execute` continuam visíveis e o filtro vale
+dentro deles: o `search` não acha, o `get_schema` não descreve e o `call_tool` do
+sandbox recusa. Use `stateless=True` para que cada requisição rode no próprio contexto.
+
 ### Code Mode (catálogos grandes)
 
 Com muitas ferramentas, listar todas a cada conversa enche o contexto do modelo, e
