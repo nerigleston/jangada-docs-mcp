@@ -96,6 +96,37 @@ with observability_session(name="resumo+tradução", user_id="cliente-123"):
 `user_id`, `session_id` e `metadata`, e devolve o id do lote. Funciona em código
 sync e async (usa `contextvars`).
 
+## Uma chave por empresa (multi-tenant)
+
+Num SaaS em que cada cliente tem o próprio projeto no dashboard, a chave do `.env`
+não serve: ela vale para o processo inteiro. Passe a chave do cliente no
+`observability_session` e só as chamadas daquele `with` vão para o projeto dele:
+
+```python
+from jangada_ai import LLM, observability_session
+
+llm = LLM("openai", "gpt-4o-mini")
+
+def atender(empresa, pergunta):
+    with observability_session(
+        api_key=empresa.obs_api_key,           # chave do projeto DESTA empresa
+        user_id=empresa.usuario,
+        session_id=empresa.conversa_id,
+    ):
+        return llm.complete(pergunta)
+```
+
+- Com `api_key` no escopo, a observabilidade liga mesmo sem
+  `JANGADA_OBSERVABILITY=true` — passar a chave já é a intenção de enviar. Fora do
+  `with`, volta a valer o ambiente.
+- `endpoint=` opcional (ex.: plataforma self-hosted do cliente); segue a mesma
+  regra de `https://`.
+- Requests concorrentes (threads ou tasks `asyncio`) não se misturam: cada uma
+  enxerga só as credenciais do próprio contexto. Um `with` interno sem `api_key`
+  herda a chave do externo.
+- `feedback(trace_id, value, api_key=...)` aceita a chave do tenant dono do trace;
+  dentro do `with`, usa a do escopo.
+
 ## Feedback de produção
 
 Capture a reação do usuário final (👍/👎 ou um score) e anexe ao trace com
@@ -174,7 +205,8 @@ Em [app.jangada.dev.br](https://app.jangada.dev.br) você acompanha tudo:
 
 ## Detalhes
 
-- A `api_key` é a chave do projeto, gerada no dashboard e configurada no `.env`.
+- A `api_key` é a chave do projeto, gerada no dashboard e configurada no `.env` (ou
+  por escopo, via `observability_session(api_key=...)`).
 - Reusar o mesmo id de lote (via `observability_session(id=...)`) **acrescenta**
   observations ao mesmo trace de forma idempotente no backend.
 - Os campos de custo/tokens vêm de [Custo e tokens](/docs/cost).

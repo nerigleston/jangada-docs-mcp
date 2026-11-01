@@ -96,6 +96,37 @@ with observability_session(name="summary+translation", user_id="customer-123"):
 `session_id` and `metadata`, and returns the batch id. It works in sync and async
 code (it uses `contextvars`).
 
+## One key per company (multi-tenant)
+
+In a SaaS where each customer has its own project in the dashboard, the `.env` key
+won't do: it applies to the whole process. Pass the customer's key to
+`observability_session` and only the calls inside that `with` go to their project:
+
+```python
+from jangada_ai import LLM, observability_session
+
+llm = LLM("openai", "gpt-4o-mini")
+
+def handle(company, question):
+    with observability_session(
+        api_key=company.obs_api_key,           # project key of THIS company
+        user_id=company.user,
+        session_id=company.conversation_id,
+    ):
+        return llm.complete(question)
+```
+
+- With an `api_key` in scope, observability turns on even without
+  `JANGADA_OBSERVABILITY=true` — passing the key already states the intent to send.
+  Outside the `with`, the environment applies again.
+- Optional `endpoint=` (e.g. the customer's self-hosted platform); same
+  `https://` rule.
+- Concurrent requests (threads or `asyncio` tasks) don't mix: each one sees only
+  the credentials of its own context. An inner `with` without `api_key` inherits
+  the outer key.
+- `feedback(trace_id, value, api_key=...)` takes the key of the tenant that owns
+  the trace; inside the `with`, it uses the scope's key.
+
 ## Production feedback
 
 Capture the end user's reaction (👍/👎 or a score) and attach it to the trace
@@ -173,7 +204,8 @@ At [app.jangada.dev.br](https://app.jangada.dev.br) you track everything:
 
 ## Details
 
-- The `api_key` is the project key, generated in the dashboard and set in `.env`.
+- The `api_key` is the project key, generated in the dashboard and set in `.env` (or
+  per scope, via `observability_session(api_key=...)`).
 - Reusing the same batch id (via `observability_session(id=...)`) **appends**
   observations to the same trace, idempotently on the backend.
 - The cost/token fields come from [Cost and tokens](/en/docs/cost).
