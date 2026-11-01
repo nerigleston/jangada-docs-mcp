@@ -15,6 +15,37 @@ async for token in llm.astream("..."):   # e.g.: FastAPI StreamingResponse
     ...
 ```
 
+## Streaming with tools, tokens and cost (`stream_complete`)
+
+`stream()`/`astream()` only deliver text. In an agent — the model writes and,
+midway, asks for tools — use `stream_complete()`/`astream_complete()`: `text`
+events while the answer is generated and, at the end, a `done` event with the
+full `Completion`, same as `complete` (`tool_calls`, `usage`, `cost`, `finish_reason`).
+
+```python
+from jangada_ai import LLM
+
+llm = LLM("anthropic", "claude-sonnet-5-5")
+
+async for ev in llm.astream_complete("Create the welcome file", tools=[write_file]):
+    if ev.type == "text":
+        print(ev.text, end="", flush=True)      # shows up while the model writes
+    else:  # "done"
+        comp = ev.completion
+        for call in comp.tool_calls:             # requested tools, as in complete
+            ...
+        print("\ncost:", comp.cost)
+```
+
+- Takes the same arguments as `complete` (`tools=`, `tool_choice=`,
+  `mcp_servers=`, `history=`, `files=`, `params=`…).
+- **Real streaming** on Anthropic, OpenAI, Azure and DeepSeek. On the others
+  (and on OpenAI's Responses API) it is the regular call and the text arrives in
+  a single chunk, followed by `done` — no cost or tool call is lost.
+- Retry and fallback before the first event, as in `stream`. The `done` is
+  reported to observability with the `streaming` capability.
+- Output guardrails and cache don't apply (the text is already out).
+
 ## Retry and fallback in streaming
 
 Retry and fallback happen **before the first token**: if opening the
