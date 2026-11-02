@@ -1,0 +1,178 @@
+---
+title: "JavaScript / TypeScript"
+description: "A jangada no npm (jangada-ai): mesma ideia da lib Python, em JavaScript e TypeScript. Instalação, primeira chamada, structured output, tools, streaming e diferenças em relação ao Python."
+---
+
+A jangada também existe para JavaScript e TypeScript, no pacote npm
+[`jangada-ai`](https://www.npmjs.com/package/jangada-ai). A ideia é a mesma da
+lib Python: trocar provider, modelo e chave sem mudar o resto do código, com
+retry e fallback por tipo de erro, structured output, tools, streaming e custo em
+cada resposta.
+
+O código-fonte é TypeScript, mas o pacote publicado é JavaScript (ESM e
+CommonJS) com os tipos (`.d.ts`) junto. Funciona em projeto JS puro; em TS você
+ganha autocompletar e checagem de tipos.
+
+> Versão atual: **0.1.0**. Traz o núcleo e 8 providers. MCP, agentes, RAG,
+> observability e o resto chegam nas próximas versões (ver
+> [O que já existe](#o-que-já-existe)).
+
+## Instalação
+
+```bash
+npm install jangada-ai
+```
+
+Os SDKs dos providers são dependências opcionais: instale só os que for usar.
+A lib importa o SDK apenas quando o provider é chamado, então `import "jangada-ai"`
+funciona sem nenhum deles.
+
+| Provider | Instale |
+| --- | --- |
+| `openai`, `azure`, `groq`, `openrouter`, `deepseek` | `npm install openai` |
+| `anthropic` | `npm install @anthropic-ai/sdk` |
+| `gemini`, `vertex` | `npm install @google/genai` |
+| structured output com Zod | `npm install zod` |
+
+Roda em Node 22 ou mais novo, Bun, Deno e runtimes edge (Cloudflare Workers,
+Vercel Edge). O núcleo não usa o sistema de arquivos. Ler arquivo e `.env` fica
+no subpath `jangada-ai/node`.
+
+## Primeira chamada
+
+JavaScript (ESM):
+
+```js
+import { LLM } from "jangada-ai";
+import "jangada-ai/node"; // carrega o .env do projeto (OPENAI_API_KEY...)
+
+const llm = new LLM("openai", "gpt-4o-mini");
+const comp = await llm.complete("Explique o que é uma jangada em uma frase.");
+console.log(comp.text, comp.usage, comp.cost);
+```
+
+JavaScript (CommonJS):
+
+```js
+const { LLM } = require("jangada-ai");
+```
+
+TypeScript é igual, com os tipos inferidos.
+
+Trocar de provider é trocar duas strings:
+
+```js
+new LLM("anthropic", "claude-sonnet-4-5");
+new LLM("gemini", "gemini-2.5-flash");
+new LLM("groq", "openai/gpt-oss-20b");
+```
+
+## Templates, params e fallback
+
+```js
+const llm = new LLM("openai", "gpt-4o-mini", {
+  system: "Você atende a {{ empresa }}.",
+  temperature: 0.3,
+  maxRetries: 2, // 429, 5xx e timeout repetem no mesmo modelo
+  fallbacks: [new LLM("anthropic", "claude-haiku-4-5")], // depois, outro provider
+});
+
+const comp = await llm.complete("Olá, sou {{ nome }}.", {
+  variables: { empresa: "Padaria Pão Quente", nome: "Ana" },
+});
+```
+
+Os params canônicos são `temperature`, `maxTokens` (padrão 8192), `topP`, `topK`,
+`stop` e `seed`. Cada adapter traduz para o nome nativo e descarta o que o
+provider não aceita. Params específicos de um provider vão em `extra`.
+
+Toda chamada aceita `signal` (`AbortSignal`) para cancelar, inclusive retries e
+fallbacks pendentes.
+
+## Structured output
+
+Com Zod 4.2 ou mais novo, `parsed` vem validado e tipado:
+
+```js
+import * as z from "zod";
+
+const Pessoa = z.object({ nome: z.string(), idade: z.number().int() }).meta({ title: "Pessoa" });
+const comp = await llm.parse("Ana tem 30 anos.", Pessoa);
+comp.parsed; // { nome: "Ana", idade: 30 }
+```
+
+Também aceita JSON Schema puro (`jsonSchema(objeto, { validate })`) e outras
+libs que seguem o padrão Standard Schema. JSON fora do schema vira
+`OutputValidationError`, que cai para o próximo fallback.
+
+## Tools
+
+```js
+import { tool } from "jangada-ai";
+
+const clima = tool({
+  name: "clima",
+  description: "Temperatura atual de uma cidade",
+  parameters: z.object({ cidade: z.string() }),
+  execute: async ({ cidade }) => ({ cidade, temperatura: 31 }),
+});
+
+const comp = await llm.complete("Como está o tempo em Recife?", { tools: [clima] });
+for (const call of comp.toolCalls) {
+  const args = await clima.parseArgs(call.args);
+  const resultado = call.result(await clima.execute(args));
+  // reenvie: history = [..., comp.assistantMessage(), { role: "tool", content: [resultado] }]
+}
+```
+
+Tools nativas, que o provider executa: `webSearch()`, `webFetch()`,
+`codeExecution()`, `fileSearch()`, `googleMaps()`, `computerUse()`. Na 0.1.0
+funcionam no Anthropic e no Gemini.
+
+## Streaming
+
+```js
+for await (const pedaco of llm.stream("Conte até 5.")) process.stdout.write(pedaco);
+
+for await (const ev of llm.streamComplete("Uma curiosidade sobre o Recife.")) {
+  if (ev.type === "text") process.stdout.write(ev.text);
+  else console.log(ev.completion.cost); // resposta completa: toolCalls, usage, custo
+}
+```
+
+## Vision e arquivos
+
+```js
+import { readImage } from "jangada-ai/node";
+
+await llm.complete("Descreva a imagem.", { images: [await readImage("foto.jpg")] });
+await llm.complete("E esta?", { images: ["https://exemplo.com/foto.png"] });
+```
+
+No núcleo (edge), passe `Image.fromBytes(...)`, uma data URI ou uma URL.
+
+## Diferenças em relação ao Python
+
+| Tema | Python | JavaScript / TypeScript |
+| --- | --- | --- |
+| Async | `complete` e `acomplete` | só `complete` (Promise) |
+| Nomes | `max_tokens`, `tool_calls` | `maxTokens`, `toolCalls` |
+| Variáveis do template | `complete(prompt, nome="Ana")` | `complete(prompt, { variables: { nome: "Ana" } })` |
+| Structured output | classe Pydantic | Zod, Standard Schema ou JSON Schema |
+| Tools | função Python vira tool pela assinatura | `tool({ name, parameters, execute })` |
+| `.env` | carregado no `import jangada_ai` | carregado no `import "jangada-ai/node"` |
+| Cancelamento | não tem | `signal` em todas as chamadas |
+| Backoff | segundos | milissegundos (`backoffBaseMs`) |
+
+## O que já existe
+
+Na 0.1.0: `LLM` (`complete`, `parse`, `stream`, `streamComplete`), templates,
+retry e fallback, erros normalizados, custo por resposta (mesma tabela de preços
+da lib Python), profiles por modelo, debug, tools, tools nativas no Anthropic e
+no Gemini, vision e os providers OpenAI, Azure OpenAI, Groq, OpenRouter,
+DeepSeek, Anthropic, Gemini e Vertex.
+
+Ainda não: tools nativas na OpenAI/Azure (Responses API), transcrição,
+embeddings, OCR, cache, `Flow`/`Graph`, MCP, agentes, guardrails,
+observability, RAG, eval, A2A, Bedrock, Mistral e Ollama. Esses chegam por fases,
+até a paridade com a lib Python.

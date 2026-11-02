@@ -1,0 +1,178 @@
+---
+title: "JavaScript / TypeScript"
+description: "jangada on npm (jangada-ai): same idea as the Python library, in JavaScript and TypeScript. Installation, first call, structured output, tools, streaming and differences from Python."
+---
+
+jangada also exists for JavaScript and TypeScript, as the npm package
+[`jangada-ai`](https://www.npmjs.com/package/jangada-ai). Same idea as the Python
+library: switch provider, model and key without changing the rest of your code,
+with retry and fallback by error type, structured output, tools, streaming and
+cost on every response.
+
+The source is TypeScript, but the published package is JavaScript (ESM and
+CommonJS) with the types (`.d.ts`) included. It works in plain JS projects; in TS
+you also get autocomplete and type checking.
+
+> Current version: **0.1.0**. It ships the core and 8 providers. MCP, agents, RAG,
+> observability and the rest arrive in the next versions (see
+> [What is available](#what-is-available)).
+
+## Installation
+
+```bash
+npm install jangada-ai
+```
+
+Provider SDKs are optional dependencies: install only the ones you use. The
+library imports an SDK only when its provider is called, so `import "jangada-ai"`
+works with none of them installed.
+
+| Provider | Install |
+| --- | --- |
+| `openai`, `azure`, `groq`, `openrouter`, `deepseek` | `npm install openai` |
+| `anthropic` | `npm install @anthropic-ai/sdk` |
+| `gemini`, `vertex` | `npm install @google/genai` |
+| structured output with Zod | `npm install zod` |
+
+Runs on Node 22 or newer, Bun, Deno and edge runtimes (Cloudflare Workers, Vercel
+Edge). The core does not touch the file system. Reading files and `.env` lives in
+the `jangada-ai/node` subpath.
+
+## First call
+
+JavaScript (ESM):
+
+```js
+import { LLM } from "jangada-ai";
+import "jangada-ai/node"; // loads the project's .env (OPENAI_API_KEY...)
+
+const llm = new LLM("openai", "gpt-4o-mini");
+const comp = await llm.complete("Explain what a jangada is in one sentence.");
+console.log(comp.text, comp.usage, comp.cost);
+```
+
+JavaScript (CommonJS):
+
+```js
+const { LLM } = require("jangada-ai");
+```
+
+TypeScript is the same, with inferred types.
+
+Switching providers means changing two strings:
+
+```js
+new LLM("anthropic", "claude-sonnet-4-5");
+new LLM("gemini", "gemini-2.5-flash");
+new LLM("groq", "openai/gpt-oss-20b");
+```
+
+## Templates, params and fallback
+
+```js
+const llm = new LLM("openai", "gpt-4o-mini", {
+  system: "You support {{ company }}.",
+  temperature: 0.3,
+  maxRetries: 2, // 429, 5xx and timeouts retry on the same model
+  fallbacks: [new LLM("anthropic", "claude-haiku-4-5")], // then another provider
+});
+
+const comp = await llm.complete("Hi, I'm {{ name }}.", {
+  variables: { company: "Fresh Bread Bakery", name: "Ana" },
+});
+```
+
+The canonical params are `temperature`, `maxTokens` (default 8192), `topP`,
+`topK`, `stop` and `seed`. Each adapter translates them to the native name and
+drops what the provider does not accept. Provider-specific params go in `extra`.
+
+Every call accepts `signal` (`AbortSignal`) to cancel, including pending retries
+and fallbacks.
+
+## Structured output
+
+With Zod 4.2 or newer, `parsed` comes validated and typed:
+
+```js
+import * as z from "zod";
+
+const Person = z.object({ name: z.string(), age: z.number().int() }).meta({ title: "Person" });
+const comp = await llm.parse("Ana is 30 years old.", Person);
+comp.parsed; // { name: "Ana", age: 30 }
+```
+
+It also accepts plain JSON Schema (`jsonSchema(object, { validate })`) and other
+libraries that follow the Standard Schema spec. JSON that does not match the
+schema becomes `OutputValidationError`, which falls back to the next model.
+
+## Tools
+
+```js
+import { tool } from "jangada-ai";
+
+const weather = tool({
+  name: "weather",
+  description: "Current temperature in a city",
+  parameters: z.object({ city: z.string() }),
+  execute: async ({ city }) => ({ city, temperature: 31 }),
+});
+
+const comp = await llm.complete("How is the weather in Recife?", { tools: [weather] });
+for (const call of comp.toolCalls) {
+  const args = await weather.parseArgs(call.args);
+  const result = call.result(await weather.execute(args));
+  // send back: history = [..., comp.assistantMessage(), { role: "tool", content: [result] }]
+}
+```
+
+Native tools, executed by the provider: `webSearch()`, `webFetch()`,
+`codeExecution()`, `fileSearch()`, `googleMaps()`, `computerUse()`. In 0.1.0 they
+work on Anthropic and Gemini.
+
+## Streaming
+
+```js
+for await (const chunk of llm.stream("Count to 5.")) process.stdout.write(chunk);
+
+for await (const ev of llm.streamComplete("A fun fact about Recife.")) {
+  if (ev.type === "text") process.stdout.write(ev.text);
+  else console.log(ev.completion.cost); // full response: toolCalls, usage, cost
+}
+```
+
+## Vision and files
+
+```js
+import { readImage } from "jangada-ai/node";
+
+await llm.complete("Describe the image.", { images: [await readImage("photo.jpg")] });
+await llm.complete("And this one?", { images: ["https://example.com/photo.png"] });
+```
+
+In the core (edge), pass `Image.fromBytes(...)`, a data URI or a URL.
+
+## Differences from Python
+
+| Topic | Python | JavaScript / TypeScript |
+| --- | --- | --- |
+| Async | `complete` and `acomplete` | only `complete` (Promise) |
+| Names | `max_tokens`, `tool_calls` | `maxTokens`, `toolCalls` |
+| Template variables | `complete(prompt, name="Ana")` | `complete(prompt, { variables: { name: "Ana" } })` |
+| Structured output | Pydantic class | Zod, Standard Schema or JSON Schema |
+| Tools | a Python function becomes a tool from its signature | `tool({ name, parameters, execute })` |
+| `.env` | loaded on `import jangada_ai` | loaded on `import "jangada-ai/node"` |
+| Cancellation | not available | `signal` on every call |
+| Backoff | seconds | milliseconds (`backoffBaseMs`) |
+
+## What is available
+
+In 0.1.0: `LLM` (`complete`, `parse`, `stream`, `streamComplete`), templates,
+retry and fallback, normalized errors, cost per response (same price table as the
+Python library), per-model profiles, debug, tools, native tools on Anthropic and
+Gemini, vision, and the OpenAI, Azure OpenAI, Groq, OpenRouter, DeepSeek,
+Anthropic, Gemini and Vertex providers.
+
+Not yet: native tools on OpenAI/Azure (Responses API), transcription, embeddings,
+OCR, cache, `Flow`/`Graph`, MCP, agents, guardrails, observability, RAG, eval,
+A2A, Bedrock, Mistral and Ollama. They arrive in phases, up to parity with the
+Python library.
