@@ -423,6 +423,51 @@ return {"cliente": c["nome"], "total": sum(p["valor"] for p in peds)}
 - **Segredos fora do `repr`.** Token e headers não aparecem mais em `repr(MCPClient)`
   nem em `repr(MCPServer)`.
 
+### Quem chamou (`current_user`, `request_headers`)
+
+Num servidor por HTTP, a ferramenta pode saber **quem está chamando** sem mudar a
+assinatura dela. `request_headers()` devolve os headers da chamada atual (nomes em
+minúsculas) e `current_user()` lê a identidade que o gateway do jangada Cloud manda:
+
+```python
+from jangada_ai import build_mcp_app, current_user
+
+def meus_pedidos() -> list[dict]:
+    """Lista os pedidos de quem está chamando."""
+    usuario = current_user()        # None no stdio, no modo Token ou fora do jangada Cloud
+    if usuario is None:
+        return []
+    return buscar_pedidos(usuario.email)
+
+app = build_mcp_app("loja", tools=[meus_pedidos], stateless=True)
+```
+
+`current_user()` devolve um `CurrentUser(id, email, name, claims)`:
+
+| Campo | Vem de | Quando existe |
+|---|---|---|
+| `id`, `email`, `name` | `x-jangada-user-id`, `-email`, `-name` | modos **Login do jangada** e **OAuth externo** |
+| `claims` | `x-jangada-claims` (JSON em base64url) | modo **OAuth externo**: o `jangada_claims` que o seu servidor OAuth devolveu (empresa, permissões, credenciais) |
+
+Funciona em ferramentas síncronas e assíncronas, no `tool_filter` e no
+`tool_description` — dá para liberar ferramentas por usuário sem middleware próprio:
+
+```python
+def liberadas():
+    u = current_user()
+    return None if u and u.email.endswith("@minhaempresa.com") else ["consultar_status"]
+
+app = build_mcp_app("erp", tools=[...], stateless=True, tool_filter=liberadas)
+```
+
+⚠️ Os headers `x-jangada-*` só são confiáveis atrás do gateway do jangada Cloud, que
+remove os que vêm do cliente antes de repassar. Num servidor exposto direto na
+internet, qualquer um pode mandá-los: lá, use `request_headers()` só para o que o
+seu próprio middleware de autenticação já validou.
+
+No transporte stdio não há HTTP: `request_headers()` devolve `{}` e `current_user()`,
+`None`.
+
 ### Humano no circuito: tools que alteram dados
 
 Marque as tools com `annotations` (do protocolo MCP) para o cliente saber o que altera

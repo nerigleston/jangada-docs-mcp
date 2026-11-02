@@ -426,6 +426,50 @@ return {"customer": c["name"], "total": sum(o["amount"] for o in orders)}
 - **Secrets out of `repr`.** Token and headers no longer show up in
   `repr(MCPClient)` or `repr(MCPServer)`.
 
+### Who is calling (`current_user`, `request_headers`)
+
+In a server served over HTTP, a tool can know **who is calling** without changing its
+signature. `request_headers()` returns the headers of the current call (lowercase names)
+and `current_user()` reads the identity sent by the jangada Cloud gateway:
+
+```python
+from jangada_ai import build_mcp_app, current_user
+
+def my_orders() -> list[dict]:
+    """Lists the orders of whoever is calling."""
+    user = current_user()        # None over stdio, in Token mode or outside jangada Cloud
+    if user is None:
+        return []
+    return find_orders(user.email)
+
+app = build_mcp_app("store", tools=[my_orders], stateless=True)
+```
+
+`current_user()` returns a `CurrentUser(id, email, name, claims)`:
+
+| Field | Comes from | When it exists |
+|---|---|---|
+| `id`, `email`, `name` | `x-jangada-user-id`, `-email`, `-name` | **jangada login** and **external OAuth** modes |
+| `claims` | `x-jangada-claims` (JSON in base64url) | **external OAuth** mode: the `jangada_claims` your OAuth server returned (company, permissions, credentials) |
+
+It works in sync and async tools, in `tool_filter` and in `tool_description`, so you can
+grant tools per user without your own middleware:
+
+```python
+def allowed():
+    u = current_user()
+    return None if u and u.email.endswith("@mycompany.com") else ["check_status"]
+
+app = build_mcp_app("erp", tools=[...], stateless=True, tool_filter=allowed)
+```
+
+⚠️ The `x-jangada-*` headers are only trustworthy behind the jangada Cloud gateway, which
+strips the ones sent by the client before forwarding. On a server exposed directly to
+the internet anyone can send them: there, use `request_headers()` only for what your own
+authentication middleware has already validated.
+
+Over stdio there is no HTTP: `request_headers()` returns `{}` and `current_user()`, `None`.
+
 ### Human in the loop: tools that change data
 
 Mark tools with `annotations` (from the MCP protocol) so the client knows which ones
