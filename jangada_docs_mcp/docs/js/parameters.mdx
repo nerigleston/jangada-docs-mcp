@@ -162,9 +162,9 @@ applyProfile("openai", "meu-modelo-1", { temperature: 0.2, max_tokens: 100 });
 ```
 
 `transform` (opcional) recebe os params e o modelo, muta os params e devolve
-avisos, para regras que não cabem em `drop`/`rename`. Os adapters aplicam o
-profile sem exibir os avisos; para vê-los, chame `applyProfile()` direto, como
-acima.
+avisos, para regras que não cabem em `drop`/`rename`. Nas chamadas, os avisos do
+profile aparecem no trace de `debug: true` (linha `profile: ...`), como o log de
+debug do Python; sem `debug`, ficam em silêncio.
 
 ## Opções do `LLM`
 
@@ -193,9 +193,10 @@ cache em [Custo e cache](/docs/js/cost-cache).
 
 ## Opções de cada chamada
 
-`complete()` e `streamComplete()` recebem um `CompleteInput`. `parse()` e
-`stream()` recebem um `CallInput`, que é o mesmo sem as três últimas linhas da
-tabela.
+`complete()` e `streamComplete()` recebem um `CompleteInput`. `stream()` recebe
+um `CallInput`, que é o mesmo sem as três últimas linhas da tabela. `parse()`
+recebe um `ParseInput`: o `CallInput` mais `tools`, só com tools nativas (veja
+[Structured output](/docs/js/structured-output)).
 
 | Opção | Tipo | O que faz |
 | --- | --- | --- |

@@ -174,7 +174,8 @@ Restrições:
   por lá. Function tools funcionam junto.
 - Ollama: `webSearch()` e `webFetch()` viram function tools que o adapter
   executa pela API da Ollama Cloud (exige `OLLAMA_API_KEY`).
-- `parse()` não aceita tools.
+- `parse()` aceita tools nativas só no Gemini e no Vertex; nos outros lança
+  `UnsupportedError`. Function tools no `parse()` lançam `TypeError`.
 - `computerUse()`: a lib expõe o pedido de ação em `serverToolCalls`, mas não
   executa a ação nem tira o screenshot.
 - Chamadas com tools não entram no cache.

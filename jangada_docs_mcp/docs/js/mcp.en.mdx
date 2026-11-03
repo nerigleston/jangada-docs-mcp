@@ -202,6 +202,10 @@ const whoami = tool({
 });
 ```
 
+On a runtime without `AsyncLocalStorage`, pass the context `execute` receives:
+`execute: (args, ctx) => currentUser(ctx)?.email`. The type takes the tool's
+`ctx` directly, with no cast.
+
 `currentUser()` returns `null` on stdio and outside jangada Cloud. On a server
 exposed directly, any client can send those headers.
 

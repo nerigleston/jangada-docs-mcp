@@ -140,6 +140,20 @@ ficam perto de 0.6 no `text-embedding-3-small` e de 0.9 no `gemini-embedding-001
 Alto demais e o cache nunca acerta; baixo demais e devolve resposta de outra
 pergunta.
 
+Por padrão a busca é linear, em memória. Com muitas entradas, passe um vector
+store do RAG em `store` (como no Python); `k` (padrão 5) é quantos vizinhos ele
+devolve por busca. As respostas continuam em memória, e entradas expiradas ou
+descartadas por `maxSize` saem também do store.
+
+```ts
+import { vectorStore } from "jangada-ai/rag";
+
+const cache = new SemanticCache(embedder, {
+  threshold: 0.6,
+  store: vectorStore(process.env.DATABASE_URL), // pgvector
+});
+```
+
 ### O que não entra no cache
 
 - Chamadas com `tools` ou `mcpServers`.

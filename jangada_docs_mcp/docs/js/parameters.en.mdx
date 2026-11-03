@@ -161,9 +161,9 @@ applyProfile("openai", "my-model-1", { temperature: 0.2, max_tokens: 100 });
 ```
 
 `transform` (optional) receives the params and the model, mutates the params and
-returns warnings, for rules that don't fit `drop`/`rename`. Adapters apply the
-profile without displaying the warnings; to see them, call `applyProfile()`
-directly, as above.
+returns warnings, for rules that don't fit `drop`/`rename`. During calls, the
+profile warnings show up in the `debug: true` trace (a `profile: ...` line), like
+Python's debug log; without `debug`, they stay silent.
 
 ## `LLM` options
 
@@ -193,9 +193,10 @@ Retry, backoff and fallback are covered in
 
 ## Per-call options
 
-`complete()` and `streamComplete()` take a `CompleteInput`. `parse()` and
-`stream()` take a `CallInput`, which is the same without the last three rows of
-the table.
+`complete()` and `streamComplete()` take a `CompleteInput`. `stream()` takes a
+`CallInput`, which is the same without the last three rows of the table.
+`parse()` takes a `ParseInput`: `CallInput` plus `tools`, native tools only (see
+[Structured output](/en/docs/js/structured-output)).
 
 | Option | Type | What it does |
 | --- | --- | --- |

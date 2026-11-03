@@ -23,7 +23,7 @@ npm install jangada-ai @anthropic-ai/sdk zod  # Anthropic + structured output wi
 | --- | --- |
 | `openai`, `azure`, `groq`, `openrouter`, `deepseek` | `openai` (6 or newer) |
 | `anthropic` | `@anthropic-ai/sdk` |
-| `gemini`, `vertex` | `@google/genai` (`GeminiInteractions` needs 1.33 or newer) |
+| `gemini`, `vertex` | `@google/genai` 1.33 or newer |
 | `bedrock` | `@aws-sdk/client-bedrock-runtime` |
 | `mistral` | `@mistralai/mistralai` |
 | `ollama` | nothing: the adapter talks HTTP directly to the server |
@@ -136,8 +136,8 @@ llm.complete(prompt, {
 
 - `prompt` accepts `{{ variables }}`, filled from `variables`. `null`
   continues the conversation from `history` only (tool loops).
-- `parse(prompt, schema, options)` takes the same options, except `tools`,
-  `toolChoice` and `mcpServers`. See [Structured output](/en/docs/js/structured-output).
+- `parse(prompt, schema, options)` takes the same options, except `toolChoice`
+  and `mcpServers`; `tools` only takes native tools. See [Structured output](/en/docs/js/structured-output).
 - Details on each option in [Parameters](/en/docs/js/parameters).
 
 ## Switching provider

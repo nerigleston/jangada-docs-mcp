@@ -3,10 +3,20 @@ title: "Visão geral"
 description: "O pacote npm jangada-ai: a jangada em JavaScript e TypeScript, com a mesma API da lib Python adaptada às convenções do JS."
 ---
 
-`jangada-ai` é o port TypeScript da [lib Python jangada](/docs). A ideia é a
-mesma: trocar provider, modelo e chave sem mudar o resto do código, com retry e
-fallback por tipo de erro, structured output, tools, streaming e custo em cada
-resposta.
+<DocsIntro
+  badge="JavaScript / TypeScript • npm jangada-ai"
+  headline="A jangada em "
+  accent="JavaScript e TypeScript"
+  install="npm install jangada-ai"
+  other="Prefere Python?"
+  otherHref="/docs"
+  code="ts"
+  copyLabel="Copiar"
+>
+  O port TypeScript da lib Python, com a mesma ideia: trocar **provider, modelo e chave** sem mudar o resto do código, com retry e fallback por tipo de erro, structured output (Zod), tools, streaming, agentes, MCP, RAG e custo em cada resposta. Roda em Node 22+, Bun, Deno e edge.
+</DocsIntro>
+
+Com fallback e template:
 
 ```ts
 import { LLM } from "jangada-ai";
@@ -19,7 +29,7 @@ const comp = await llm.complete("Olá, {{ nome }}!", { variables: { nome: "Ana" 
 console.log(comp.text, comp.usage, comp.cost);
 ```
 
-Versão atual: 1.0.4 (npm). A constante `VERSION`, exportada pelo pacote, traz o
+Versão atual: 1.0.5 (npm). A constante `VERSION`, exportada pelo pacote, traz o
 mesmo número.
 
 ## O que vem no pacote

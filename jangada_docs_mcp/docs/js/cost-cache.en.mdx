@@ -141,6 +141,20 @@ paraphrases score around 0.6 on `text-embedding-3-small` and around 0.9 on
 `gemini-embedding-001`. Too high and the cache never hits; too low and it returns
 the answer to a different question.
 
+By default the search is linear, in memory. With many entries, pass a RAG vector
+store in `store` (as in Python); `k` (default 5) is how many neighbors it returns
+per search. Responses stay in memory, and entries that expire or are evicted by
+`maxSize` are also removed from the store.
+
+```ts
+import { vectorStore } from "jangada-ai/rag";
+
+const cache = new SemanticCache(embedder, {
+  threshold: 0.6,
+  store: vectorStore(process.env.DATABASE_URL), // pgvector
+});
+```
+
 ### What is not cached
 
 - Calls with `tools` or `mcpServers`.

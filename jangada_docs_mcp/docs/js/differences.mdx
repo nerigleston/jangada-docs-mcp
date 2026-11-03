@@ -70,7 +70,6 @@ por isso não toca o disco. O que depende do Node fica em subpaths.
 | Tema | Python | JavaScript / TypeScript |
 | --- | --- | --- |
 | `classify` | status HTTP e nome da classe | também `cause.code` de rede do Node (`ECONNRESET`, `UND_ERR_CONNECT_TIMEOUT`...) |
-| `SemanticCache` | `store` opcional (vector store do RAG) | busca em memória, sem `store` |
 | Guardrail próprio | `check_input` e `acheck_input`, `GuardResult(ok, reason)` | só `async checkInput`, devolve `{ ok, reason }` |
 | Reentrância do judge | `ContextVar` | marca na própria chamada do judge (funciona em qualquer runtime) |
 | `detectObjects` | aceita caminho; JSON fora do schema pode virar `OutputValidationError` | só `ImagePart`; leitura sempre tolerante (caixas inválidas são descartadas) |
@@ -83,6 +82,7 @@ por isso não toca o disco. O que depende do Node fica em subpaths.
 | Ollama | SDK `ollama` | `fetch` direto na API nativa (roda em edge) |
 | Gemini, structured output | `response_schema` (Pydantic) | `responseJsonSchema` (JSON Schema) |
 | Gemini, profiles e extras | `thinking_budget`, `top_p` | `thinkingBudget`, `topP` (vocabulário do `@google/genai`) |
+| Avisos dos profiles | log de debug (`logging`, logger `jangada_ai`) | linha `profile: ...` no trace de `debug: true` |
 | Gemini, embeddings | `embed(..., output_dimensionality=768)` | `embed(textos, { outputDimensionality: 768 })` |
 | Gemini com MCP | AFC do SDK; usage só da última resposta | loop da jangada; usage somado das rodadas |
 | Gemini Interactions | `poll_interval`/`timeout` em segundos, sync e async | `pollIntervalMs`/`timeoutMs`, só async, `signal` cancela o polling |

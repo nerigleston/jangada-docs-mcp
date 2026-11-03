@@ -50,7 +50,9 @@ latência conta desde o pedido até o último pedaço, incluindo a espera pelo 1
 Cada observation tem `status`: `OK`, `INCOMPLETE` (resposta cortada por
 `maxTokens`, `finishReason === "length"`) ou `ERROR` (todos os candidatos
 falharam, com tipo e mensagem do erro). Textos longos de input e output são
-truncados.
+truncados. Como no Python, `ERROR` sai de `complete`, `parse` e
+`streamComplete` (inclusive quando o stream cai depois do 1º evento); `stream`,
+`transcribe` e `embed` só reportam sucesso.
 
 Capacidades detectadas: `vision` (`images`), `documents` (`files`), `tools`,
 `mcp`, `structured_output` (`parse`), `guardrails`, `streaming`, `cache`,
@@ -95,6 +97,9 @@ const r1 = await llm.complete("Resuma: ...", { trace: sessao });
 const r2 = await llm.complete(`Traduza: ${r1.text}`, { trace: sessao });
 console.log(sessao.id); // id do trace
 ```
+
+`transcribe(audio, { trace })` e `embed(textos, { trace })` também aceitam a
+sessão.
 
 No Node, `runInSession` de `jangada-ai/node` dispensa passar `trace` em cada
 chamada (usa `AsyncLocalStorage`). Vale também para chamadas feitas dentro de
@@ -146,8 +151,9 @@ await feedback(sessao.id, -1, { name: "precisao", comment: "valor errado" });
 ```
 
 Opções: `name` (padrão `"thumbs"`), `comment`, `apiKey` e `endpoint` (chave do
-tenant dono do trace) e `timeoutMs`. Dentro de `runInSession` com `apiKey`, usa a
-chave da sessão.
+tenant dono do trace), `timeoutMs` e `trace` (uma sessão de
+`observabilitySession()`; usa a `apiKey` e o `endpoint` dela). Dentro de
+`runInSession` com `apiKey`, usa a chave da sessão sem precisar de `trace`.
 
 ## Prompts versionados
 

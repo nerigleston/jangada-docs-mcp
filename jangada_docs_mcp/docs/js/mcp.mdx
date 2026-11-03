@@ -201,6 +201,10 @@ const quem = tool({
 });
 ```
 
+Em runtime sem `AsyncLocalStorage`, passe o contexto que o `execute` recebe:
+`execute: (args, ctx) => currentUser(ctx)?.email`. O tipo aceita o `ctx` da tool
+direto, sem cast.
+
 `currentUser()` devolve `null` no stdio e fora do jangada Cloud. Num servidor
 exposto direto, qualquer cliente pode mandar esses headers.
 

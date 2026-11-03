@@ -82,7 +82,9 @@ type StreamEvent =
   and tool calls are never lost.
 - With native tools on Mistral and Ollama, the call is also a regular one,
   delivered at once.
-- The `"done"` is reported to observability with the `streaming` capability.
+- The `"done"` is reported to observability with the `streaming` capability. If
+  the call fails (before or after the first event), an `ERROR` observation is
+  sent, as in `complete()`.
 
 ## Retry and fallback
 
@@ -107,10 +109,9 @@ See [Errors and fallback](/en/docs/js/errors-fallback) for the full policy.
 
 Every call accepts `signal`. Aborting stops the running stream, the backoff
 wait and pending fallbacks. Cancellation never goes through retry or fallback:
-the error is thrown directly. Before the first chunk, the error is the signal's
-`reason` (`AbortError`, or `TimeoutError` with `AbortSignal.timeout`); mid
-stream, it may be the SDK's cancellation error. That is why the example checks
-`signal.aborted` instead of the error type.
+the error is thrown directly. Before and after the first chunk, the error is
+the signal's `reason` (`AbortError`, or `TimeoutError` with
+`AbortSignal.timeout`), as in the other calls.
 
 ```ts
 const ctrl = new AbortController();
@@ -123,6 +124,17 @@ try {
 } catch (e) {
   if (ctrl.signal.aborted) console.log("\n(cancelled)");
   else throw e;
+}
+```
+
+## Stopping midway
+
+A `break` (or `return`) inside the `for await` closes the provider's stream,
+which ends the HTTP connection. You do not need to abort to stop reading.
+
+```ts
+for await (const chunk of llm.stream("List 100 cities.")) {
+  if (chunk.includes("Recife")) break; // the connection closes here
 }
 ```
 

@@ -1,37 +1,38 @@
 ---
 title: "Documentation"
-description: "Jangada AI — a thin, adaptable layer over LLM SDKs. Swap provider, model, or api_key without changing the rest of your code."
+description: "Jangada AI: a thin layer over the LLM SDKs. Swap provider, model or key without touching the rest of your code."
 ---
 
-**Jangada AI** 🛶 is a **thin PT-BR layer over the LLM SDKs, with native
-observability in 1 line in your `.env`**. The goal is to **swap
-provider/model/api_key without changing the rest of your code**, with `{{ }}`
-templates, chained flows, structured output (Pydantic), vision, audio, async, and
-error-based fallback. It works with Anthropic, OpenAI, Groq, Gemini, Mistral, OpenRouter
-and the cloud gateways (AWS Bedrock, Azure OpenAI, Vertex AI).
-
-## Installation
-
-```bash
-pip install "jangada-ai[anthropic]"
-```
+<DocsIntro
+  badge="Python • PyPI jangada-ai"
+  headline="A thin layer over "
+  accent="LLM SDKs"
+  install='pip install "jangada-ai[all,rag,mcp]"'
+  other="Prefer JavaScript / TypeScript?"
+  otherHref="/en/docs/js"
+  copyLabel="Copy"
+>
+  Native observability in one line of your `.env`. Swap **provider, model and key** without touching the rest of your code, with `{{ }}` templates, structured output (Pydantic), vision, audio, tools, MCP, RAG, agents, async, retry and error-based fallback. Works with Anthropic, OpenAI, Groq, Gemini, Mistral, OpenRouter, DeepSeek, Ollama and the cloud gateways (AWS Bedrock, Azure OpenAI and Vertex AI).
+</DocsIntro>
 
 ## Where to start
 
-<Cards>
-  <Card title="Getting started" href="/en/docs/getting-started" description="Install, configure your key, and make your first call." />
-  <Card title="Providers and keys" href="/en/docs/providers" description="Anthropic, OpenAI, Groq, Gemini, and Mistral with the same API." />
-  <Card title="Structured output" href="/en/docs/structured-output" description="Output validated with Pydantic on any provider." />
-  <Card title="Tools (function calling)" href="/en/docs/tools" description="The model calls your functions, provider-agnostic." />
-  <Card title="RAG" href="/en/docs/rag" description="Embeddings, vector store, and hybrid search." />
-  <Card title="Retry and fallback" href="/en/docs/retry-fallback" description="Defenses against API failures." />
-</Cards>
+<TopicGrid items={[
+  { title: "Getting started", description: "Install, set your key and make the first call.", href: "/en/docs/getting-started" },
+  { title: "Providers and keys", description: "All 11 providers with one API and where each key goes.", href: "/en/docs/providers" },
+  { title: "Structured output", description: "Output validated with Pydantic on any provider.", href: "/en/docs/structured-output" },
+  { title: "Tools (function calling)", description: "The model calls your functions, the same way on every provider.", href: "/en/docs/tools" },
+  { title: "RAG", description: "Embeddings, pgvector or MongoDB, hybrid search and rerank.", href: "/en/docs/rag" },
+  { title: "Retry and fallback", description: "Backoff retries and provider switching by error type.", href: "/en/docs/retry-fallback" },
+]} />
 
 ## Sections
 
-- **Getting started** — getting-started, parameters, providers, capabilities.
-- **Providers** — Anthropic, OpenAI, Groq, Gemini, Mistral.
-- **Capabilities** — structured output, tools, vision, audio, documents, detection, streaming, RAG, MCP, observability.
-- **Reliability** — errors, retry/fallback, cost, debug.
-- **Tutorials** — step by step from zero to fallback, structured extraction, RAG, and an MCP agent.
-- **Advanced** — extending (new provider) and flows.
+<TopicGrid items={[
+  { title: "Getting started", description: "Installation, parameters, providers and the capability matrix.", href: "/en/docs/getting-started" },
+  { title: "Providers", description: "One page per provider: Anthropic, OpenAI, Groq, Gemini and the rest.", href: "/en/docs/llm-anthropic" },
+  { title: "Capabilities", description: "Structured output, tools, vision, audio, documents, streaming, RAG, MCP, agents and observability.", href: "/en/docs/structured-output" },
+  { title: "Reliability", description: "Errors, retry and fallback, cost, cache and debug.", href: "/en/docs/errors" },
+  { title: "Tutorials", description: "Zero to fallback, structured extraction, RAG and an MCP agent.", href: "/en/docs/tutorial-primeiros-passos" },
+  { title: "Code examples", description: "Full projects: assistant, support RAG, research agents.", href: "/en/docs/examples" },
+]} />

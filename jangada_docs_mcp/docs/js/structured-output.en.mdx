@@ -39,8 +39,8 @@ llm.parse(prompt, schema, options?)
 ```
 
 The options are the same as `complete()` (`system`, `variables`, `history`,
-`images`, `files`, `params`, `signal`, `trace`), except `tools`, `toolChoice`
-and `mcpServers`. Vision and documents work in the same call:
+`images`, `files`, `params`, `signal`, `trace`), except `toolChoice` and
+`mcpServers`. `tools` only takes native tools (see below). Vision and documents work in the same call:
 
 ```ts
 import { readDocument } from "jangada-ai/node";
@@ -173,9 +173,22 @@ In strict json_schema (OpenAI, Azure, Groq, OpenRouter and Mistral), the library
 adjusts the schema to what the API requires: `additionalProperties: false` on
 objects and the fields in `required`. In practice the model returns every field.
 
-`parse()` does not accept tools. In Python, Gemini allows `parse()` with native
-tools; in JS the `parse()` signature has no `tools`. To combine search and
-shape, call `complete({ tools: [webSearch()] })` and then `parse()` on the text.
+`parse()` only takes native tools, and only on Gemini and Vertex, as in Python:
+
+```ts
+import { LLM, webSearch } from "jangada-ai";
+import * as z from "zod";
+
+const Score = z.object({ opponent: z.string(), goalsFor: z.number(), goalsAgainst: z.number() });
+const gemini = new LLM("gemini", "gemini-3-flash-preview");
+const r = await gemini.parse("Who won Sport's last match?", Score, {
+  tools: [webSearch()],
+});
+```
+
+On other providers, a native tool in `parse()` throws `UnsupportedError`, and a
+function tool throws `TypeError` on any provider. In those cases, call
+`complete({ tools: [webSearch()] })` and then `parse()` on the text.
 
 In Python the schema is a Pydantic class and `parsed` is an instance of it. In
 JS `parsed` is a plain object, typed from the schema.

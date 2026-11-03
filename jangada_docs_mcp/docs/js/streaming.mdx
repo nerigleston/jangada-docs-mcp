@@ -82,7 +82,9 @@ type StreamEvent =
   perdem.
 - Com tools nativas na Mistral e no Ollama, a chamada também é a normal,
   entregue de uma vez.
-- O `"done"` é reportado à observability com a capability `streaming`.
+- O `"done"` é reportado à observability com a capability `streaming`. Se a
+  chamada falhar (antes ou depois do 1º evento), vai uma observation `ERROR`,
+  como no `complete()`.
 
 ## Retry e fallback
 
@@ -107,10 +109,9 @@ Veja [Erros e fallback](/docs/js/errors-fallback) para a política completa.
 
 Toda chamada aceita `signal`. Abortar interrompe o stream em andamento, a espera
 do backoff e os fallbacks pendentes. O cancelamento nunca passa por retry nem
-fallback: o erro sobe direto. Antes do primeiro pedaço, o erro é o `reason` do
-sinal (`AbortError`, ou `TimeoutError` com `AbortSignal.timeout`); no meio do
-stream, pode ser o erro de cancelamento do SDK. Por isso o exemplo confere
-`signal.aborted` em vez do tipo do erro.
+fallback: o erro sobe direto. Antes e depois do primeiro pedaço, o erro é o
+`reason` do sinal (`AbortError`, ou `TimeoutError` com `AbortSignal.timeout`),
+como nas outras chamadas.
 
 ```ts
 const ctrl = new AbortController();
@@ -123,6 +124,17 @@ try {
 } catch (e) {
   if (ctrl.signal.aborted) console.log("\n(cancelado)");
   else throw e;
+}
+```
+
+## Parar no meio
+
+Um `break` (ou `return`) dentro do `for await` fecha o stream do provider, o que
+encerra a conexão HTTP. Não é preciso abortar para parar de ler.
+
+```ts
+for await (const pedaco of llm.stream("Liste 100 cidades.")) {
+  if (pedaco.includes("Recife")) break; // a conexão fecha aqui
 }
 ```
 

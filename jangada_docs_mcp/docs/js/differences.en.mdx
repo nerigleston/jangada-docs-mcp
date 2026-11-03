@@ -70,7 +70,6 @@ so it does not touch the disk. What depends on Node lives in subpaths.
 | Topic | Python | JavaScript / TypeScript |
 | --- | --- | --- |
 | `classify` | HTTP status and class name | also Node network `cause.code` (`ECONNRESET`, `UND_ERR_CONNECT_TIMEOUT`...) |
-| `SemanticCache` | optional `store` (RAG vector store) | in-memory search, no `store` |
 | Custom guardrail | `check_input` and `acheck_input`, `GuardResult(ok, reason)` | `async checkInput` only, returns `{ ok, reason }` |
 | Judge reentrancy | `ContextVar` | a marker on the judge's own call (works in any runtime) |
 | `detectObjects` | accepts a path; JSON outside the schema may become `OutputValidationError` | `ImagePart` only; reading is always lenient (invalid boxes are dropped) |
@@ -83,6 +82,7 @@ so it does not touch the disk. What depends on Node lives in subpaths.
 | Ollama | `ollama` SDK | direct `fetch` to the native API (runs on edge) |
 | Gemini, structured output | `response_schema` (Pydantic) | `responseJsonSchema` (JSON Schema) |
 | Gemini, profiles and extras | `thinking_budget`, `top_p` | `thinkingBudget`, `topP` (`@google/genai` vocabulary) |
+| Profile warnings | debug log (`logging`, `jangada_ai` logger) | a `profile: ...` line in the `debug: true` trace |
 | Gemini, embeddings | `embed(..., output_dimensionality=768)` | `embed(texts, { outputDimensionality: 768 })` |
 | Gemini with MCP | SDK AFC; usage from the last response only | jangada's loop; usage summed across rounds |
 | Gemini Interactions | `poll_interval`/`timeout` in seconds, sync and async | `pollIntervalMs`/`timeoutMs`, async only, `signal` cancels polling |
