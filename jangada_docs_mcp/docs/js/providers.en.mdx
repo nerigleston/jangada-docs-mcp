@@ -1,0 +1,206 @@
+---
+title: "Providers and API keys"
+description: "The 11 jangada-ai providers, the environment variables for each one and how to pass key, URL and SDK options explicitly."
+---
+
+Each provider lives in an adapter that translates the normalized types
+(`Message`, `Completion`) to the native SDK. The first `LLM` argument picks the
+adapter; the second is the model, with the name the provider uses.
+
+| Provider | `new LLM(...)` | Environment variable | SDK |
+| --- | --- | --- | --- |
+| OpenAI | `"openai"` | `OPENAI_API_KEY` | `openai` |
+| Azure OpenAI | `"azure"` | `AZURE_OPENAI_API_KEY` + `AZURE_OPENAI_ENDPOINT` | `openai` |
+| Groq | `"groq"` | `GROQ_API_KEY` | `openai` |
+| OpenRouter | `"openrouter"` | `OPENROUTER_API_KEY` | `openai` |
+| DeepSeek | `"deepseek"` | `DEEPSEEK_API_KEY` | `openai` |
+| Anthropic | `"anthropic"` | `ANTHROPIC_API_KEY` | `@anthropic-ai/sdk` |
+| Gemini | `"gemini"` | `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) | `@google/genai` |
+| Vertex AI | `"vertex"` | `GOOGLE_CLOUD_PROJECT` + Google Cloud credentials | `@google/genai` |
+| AWS Bedrock | `"bedrock"` | AWS credentials + `AWS_REGION` | `@aws-sdk/client-bedrock-runtime` |
+| Mistral | `"mistral"` | `MISTRAL_API_KEY` | `@mistralai/mistralai` |
+| Ollama | `"ollama"` | `OLLAMA_API_KEY` (Ollama Cloud only) | none |
+
+Groq, OpenRouter and DeepSeek speak OpenAI's `chat.completions` dialect, so they
+use the `openai` SDK pointed at another URL. In Python, Groq uses the `groq` SDK
+and Ollama uses the `ollama` SDK; in JS neither needs those packages.
+
+## Key and SDK options
+
+Without `apiKey`, the adapter reads the environment variable from the table. To
+pass the key directly (from a secrets vault, for example):
+
+```ts
+import { LLM } from "jangada-ai";
+
+const llm = new LLM("openai", "gpt-4o-mini", { apiKey: "sk-..." });
+```
+
+Precedence is `apiKey` > environment variable > `.env` (loaded by
+`import "jangada-ai/node"`).
+
+`clientOptions` goes straight to the SDK client constructor. That is where
+`baseURL`, `timeout`, the SDK's own `maxRetries`, headers and so on belong:
+
+```ts
+// OpenAI-compatible gateway (LiteLLM, vLLM, internal proxy...)
+const local = new LLM("openai", "my-model", {
+  apiKey: "gateway-token",
+  clientOptions: { baseURL: "http://localhost:4000/v1", timeout: 60_000 },
+});
+
+// Anthropic behind a proxy
+const claude = new LLM("anthropic", "claude-sonnet-4-5", {
+  clientOptions: { baseURL: "https://proxy.company.com/anthropic" },
+});
+```
+
+The `clientOptions` keys are those of each provider's SDK (`baseURL` in `openai`
+and `@anthropic-ai/sdk`, `httpOptions` in `@google/genai`, `region` and
+`credentials` in Bedrock). For retries, prefer the `LLM`'s `maxRetries`, which
+understands the normalized errors and falls back afterward.
+
+## OpenRouter
+
+A gateway to hundreds of models with one key. The model is qualified by vendor:
+
+```ts
+new LLM("openrouter", "openai/gpt-4o");
+new LLM("openrouter", "anthropic/claude-sonnet-4.6", {
+  clientOptions: { defaultHeaders: { "HTTP-Referer": "https://mysite.com", "X-Title": "My App" } },
+  extra: { models: ["anthropic/claude-sonnet-4.6", "openai/gpt-4o"] }, // OpenRouter routing
+});
+```
+
+Supports text, streaming, structured output, vision, tools, transcription and
+embeddings. `webSearch()` becomes OpenRouter's `web` plugin. Server-side MCP
+(`mcpServers`) does not exist here and throws `UnsupportedError`.
+
+## DeepSeek
+
+`parse()` uses JSON Object mode (the API has no schema mode). There are no
+native tools and no transcription. Thinking mode goes through `extra`:
+
+```ts
+new LLM("deepseek", "deepseek-chat", {
+  extra: { thinking: { type: "enabled", reasoning_effort: "high" } },
+});
+```
+
+## Azure OpenAI
+
+`model` is the deployment name, not the model name. Endpoint and API version
+come from the environment or from `clientOptions`:
+
+```bash
+AZURE_OPENAI_API_KEY=...
+AZURE_OPENAI_ENDPOINT=https://my-resource.openai.azure.com
+OPENAI_API_VERSION=2024-10-21   # optional; this is the default
+```
+
+```ts
+const azure = new LLM("azure", "my-gpt5-deploy", {
+  profileModel: "gpt-5", // the deployment runs gpt-5: apply its profile rules
+  clientOptions: { endpoint: "https://my-resource.openai.azure.com", apiVersion: "2024-10-21" },
+});
+```
+
+To authenticate with Microsoft Entra ID, pass `azureADTokenProvider` in
+`clientOptions` instead of the key. Native tools and `mcpServers` go through
+Azure's v1 API (`<endpoint>/openai/v1/`, Responses API), so they require the
+endpoint to be set. For `profileModel`, see
+[Parameters](/en/docs/js/parameters#per-model-profiles).
+
+## Vertex AI
+
+Gemini on Google Cloud, through the same `@google/genai` with `vertexai: true`.
+It uses no API key: authentication is Google Cloud's (Application Default
+Credentials, `gcloud auth application-default login` or a service account).
+
+```ts
+const vertex = new LLM("vertex", "gemini-2.5-flash", {
+  clientOptions: { project: "my-project", location: "us-central1" },
+});
+```
+
+Without `clientOptions`, the project comes from `GOOGLE_CLOUD_PROJECT` and the
+region from `GOOGLE_CLOUD_LOCATION`. With no region, `gemini-3*` models go to
+`global` and the others to `us-central1`. Vertex inherits Gemini's profile
+rules. It accepts the same native tools, but does not mix a native tool with a
+function tool in the same call.
+
+## AWS Bedrock
+
+Uses the Converse API, with the same payload for Claude, Llama, Mistral and
+Amazon Nova. Credentials follow the standard AWS chain (`AWS_ACCESS_KEY_ID` and
+`AWS_SECRET_ACCESS_KEY`, `AWS_PROFILE`, instance role), resolved by the SDK.
+The region comes from `clientOptions.region`, `AWS_REGION` or
+`AWS_DEFAULT_REGION`.
+
+```ts
+const bedrock = new LLM("bedrock", "us.anthropic.claude-sonnet-4-5-20250929-v1:0", {
+  clientOptions: { region: "us-east-1" },
+  extra: { guardrailConfig: { guardrailIdentifier: "abc123", guardrailVersion: "1" } },
+});
+```
+
+`topK` and `seed` do not exist in Converse and are dropped. Top-level Converse
+fields (`additionalModelRequestFields`, `guardrailConfig`, `performanceConfig`,
+`serviceTier`, `requestMetadata`...) go through `extra`. Structured output uses
+tool forcing. Native tools only work on Amazon Nova models (`webSearch()`
+becomes `nova_grounding`, `codeExecution()` becomes `nova_code_interpreter`).
+
+## Mistral
+
+Mistral's JS SDK uses camelCase and validates the payload: extra params must be
+camelCase (`randomSeed`, `safePrompt`), otherwise the SDK drops them. `seed`
+becomes `randomSeed` and `topK` is dropped. Besides chat, Mistral does
+embeddings, transcription (Voxtral) and OCR (`llm.ocr()`, with
+`mistral-ocr-latest`). Native tools (`webSearch`, `codeExecution`,
+`imageGeneration`, `fileSearch`) go through the Conversations API.
+
+## Ollama
+
+The adapter talks HTTP directly to Ollama's native API (`/api/chat`,
+`/api/embed`), with no SDK. That is why it also runs on edge.
+
+```ts
+// local: http://localhost:11434, no key
+const local = new LLM("ollama", "llama3.2");
+
+// another host
+const remote = new LLM("ollama", "qwen3", { clientOptions: { host: "http://gpu-01:11434" } });
+
+// Ollama Cloud (needs OLLAMA_API_KEY)
+const cloud = new LLM("ollama", "gpt-oss:120b", { clientOptions: { host: "https://ollama.com" } });
+```
+
+The host can also come from `OLLAMA_HOST`. `maxTokens` becomes `num_predict`;
+`think`, `keep_alive` and `format` go at the top of the request; other extras
+(`num_ctx`, `min_p`) go in `options`. A model that was not pulled raises
+`NotFoundError` with the hint `ollama pull <model>`; a stopped server raises
+`APIConnectionError`.
+
+`webSearch()` and `webFetch()` become function tools that the adapter itself
+runs through the Ollama Cloud API (they require `OLLAMA_API_KEY`).
+
+## Structured output by provider
+
+| Provider | Mechanism |
+| --- | --- |
+| OpenAI, Azure | strict json_schema `response_format` |
+| Groq, OpenRouter | json_schema; if the model does not accept it, JSON Object mode |
+| DeepSeek | JSON Object mode |
+| Anthropic, Bedrock | tool forcing |
+| Gemini, Vertex | `responseJsonSchema` |
+| Mistral | strict json_schema `responseFormat` |
+| Ollama | `format` with the JSON Schema |
+
+Usage is the same everywhere: see [Structured output](/en/docs/js/structured-output).
+
+## Your own provider
+
+`registerProvider(name, loader)` registers your own adapter (a `Provider`
+subclass), loaded on demand like the built-in ones. `availableProviders()` lists
+the registered ones. An adapter's structure follows the Python library's: see
+[Extending](/en/docs/extending).

@@ -1,0 +1,266 @@
+---
+title: "Agentes, fluxos e grafos"
+description: "Agent, Squad, Flow, Graph, plan e stepBack no jangada-ai, mais as tools prontas do subpath jangada-ai/prebuilt."
+---
+
+A orquestração do `jangada-ai` é feita com o que a lib já tem (tool calling,
+structured output, MCP e RAG). Tudo sai do import principal, menos as tools
+prontas, que ficam em `jangada-ai/prebuilt`.
+
+```ts
+import { Agent, Flow, Graph, plan, RAGMemory, Squad, stepBack, tool } from "jangada-ai";
+```
+
+Toda chamada é assíncrona e aceita `signal` (`AbortSignal`). Não existe
+`arun`/`astream` como no Python: `run` e `stream` já são async.
+
+## Agent
+
+Um `Agent` é um `LLM` com papel, objetivo e tools. O `run()` roda o loop de tool
+calling até o modelo parar de pedir tools ou até `maxIterations` (padrão 8).
+
+```ts
+import * as z from "zod";
+import { Agent, LLM, tool } from "jangada-ai";
+
+const clima = tool({
+  name: "clima",
+  description: "Retorna o clima de uma cidade.",
+  parameters: z.object({ cidade: z.string() }),
+  execute: async ({ cidade }) => `ensolarado em ${cidade}, 28°C`,
+});
+
+const llm = new LLM("openai", "gpt-4o-mini");
+const meteoro = new Agent(llm, {
+  role: "Meteorologista",
+  goal: "informar o clima de forma clara",
+  tools: [clima],
+});
+
+const res = await meteoro.run("Como está o clima em Recife?");
+console.log(res.text, res.cost, res.iterations);
+```
+
+Opções do construtor:
+
+| Opção | O que faz |
+| --- | --- |
+| `role`, `goal`, `backstory` | Montam o system prompt (`Você é {role}. Seu objetivo: {goal}. {backstory}`). `role` padrão: `"assistente"`. |
+| `tools` | Function tools (`tool({ ..., execute })`) e tools nativas (`webSearch()`...). A nativa roda no provider e aparece no `toolTrace` com `server: true`. |
+| `mcpClient` | Um `MCPClient` conectado: as tools do servidor entram no loop. Veja [MCP](/docs/js/mcp). |
+| `mcpAllowedTools` | Restringe as tools do MCP. Uma tool fora da lista não executa, mesmo que o modelo invente o nome. |
+| `mcpToolsCache` | Tools do MCP já listadas (`await mcpTools(mcp)`), para não chamar `listTools()` a cada `run`. |
+| `onToolCall(call)` | Roda antes de cada tool call. Devolver `false` veta a chamada. |
+| `onToolResult(call, result)` | Roda depois de cada tool call. |
+| `memory` | Memória de longo prazo (`RAGMemory` ou qualquer objeto com `recall`/`remember`). |
+| `maxIterations` | Teto de rodadas modelo → tools. Padrão 8. |
+
+`run(task, { context, history, signal })` devolve um `AgentResult`:
+
+- `text`, `messages` (histórico do turno), `usage`, `cost`, `iterations`.
+- `costComplete`: `false` se alguma chamada ficou sem preço conhecido.
+- `stoppedByLimit`: `true` quando o loop bateu em `maxIterations` com tool calls
+  pendentes. Nesse caso `text` não é a resposta final (a lib também emite um
+  `console.warn`).
+- `toolTrace`: `{ call, result, isError, server? }` de cada chamada.
+
+### Conversa multi-turno
+
+`history` recebe os turnos anteriores, que entram antes da nova tarefa. Guarde
+`res.messages` e passe de volta no próximo turno:
+
+```ts
+const historico = [
+  { role: "user" as const, content: "Quanto gastei em maio?" },
+  { role: "assistant" as const, content: "R$ 3.200 em maio." },
+];
+const turno = await meteoro.run("E no mês anterior?", { history: historico });
+```
+
+### Streaming
+
+`stream()` emite a resposta final em pedaços. Sem tools, é streaming real do
+provider. Com tools, o loop roda antes e o texto final sai em pedaços de
+`chunkSize` caracteres (padrão 24), sem gerar a resposta duas vezes. No fim,
+`lastStreamResult` traz o `AgentResult` do turno.
+
+```ts
+for await (const pedaco of meteoro.stream("Resuma o clima da semana")) {
+  process.stdout.write(pedaco);
+}
+console.log(meteoro.lastStreamResult?.toolTrace);
+```
+
+### Memória de longo prazo
+
+`RAGMemory` busca no RAG o que for relevante antes de responder (`k` trechos,
+padrão 3) e grava cada resposta final depois. Falhas viram `console.warn` e não
+derrubam o agente. Turnos que pararam por limite não são gravados.
+
+```ts
+import { RAG, vectorStore } from "jangada-ai/rag";
+
+const rag = new RAG(new LLM("openai", "text-embedding-3-small"), vectorStore("memory"));
+const suporte = new Agent(llm, { role: "Suporte", memory: new RAGMemory(rag, { k: 3 }) });
+```
+
+### Agent Card
+
+`card({ url, version, securitySchemes, security })` devolve os metadados no
+formato do Agent Card do A2A (`protocolVersion` `"0.3.0"`, `skills` a partir das
+tools). Para servir o agente por HTTP, veja [A2A](/docs/js/a2a).
+
+## Squad
+
+`Squad` coordena vários agentes. O padrão é sequencial: cada agente recebe a
+saída do anterior como contexto.
+
+```ts
+const pesquisador = new Agent(llm, { role: "Pesquisador", goal: "levantar fatos" });
+const escritor = new Agent(llm, { role: "Escritor", goal: "escrever um texto claro" });
+
+const r = await new Squad([pesquisador, escritor]).run("Um parágrafo sobre jangadas.");
+console.log(r.text); // saída do último agente
+console.log(r.outputs); // { Pesquisador: "...", Escritor: "..." }
+```
+
+- `context: "last"` (padrão): cada agente vê só a saída anterior.
+- `context: "full"`: cada agente vê o transcript inteiro, rotulado por papel.
+  Mais contexto e custo maior em cadeias longas.
+
+Com `manager`, o modo é hierárquico: o gerente ganha tools
+`delegar_para_<papel>` (acentos removidos, nomes únicos, até 64 caracteres) e
+decide a quem delegar. O gerente é uma cópia do agente original, então
+`onToolCall`, MCP e memória continuam valendo.
+
+```ts
+const gerente = new Agent(llm, { role: "Gerente", goal: "coordenar o time" });
+const r2 = await new Squad([pesquisador, escritor], { manager: gerente }).run("Resumo do tema X");
+```
+
+`SquadResult` traz `text`, `outputs` (papel → saída; papéis repetidos viram
+`Revisor#2`), `usage` e `cost` somando gerente e membros, `costComplete` e
+`steps`: uma entrada por agente ou delegação com `role`, `usage`, `cost`,
+`costComplete` e `durationMs`.
+
+## plan
+
+`plan(llm, goal, { maxTasks })` decompõe um objetivo em tarefas com structured
+output. Padrão: até 5 tarefas. Se o modelo não devolver o plano estruturado, lança
+`Error`.
+
+```ts
+for (const tarefa of await plan(llm, "Lançar uma newsletter sobre IA", { maxTasks: 5 })) {
+  console.log("-", tarefa);
+}
+```
+
+## Flow
+
+`Flow` encadeia passos. A saída de cada passo vira variável `{{ nome }}` dos
+seguintes.
+
+```ts
+const flow = new Flow(llm)
+  .step("rascunho", "Escreva um parágrafo sobre {{ tema }}.")
+  .step("revisao", "Revise e melhore:\n{{ rascunho }}", { output: "final" });
+
+const fr = await flow.run({ tema: "jangadas do Nordeste" });
+console.log(fr.get("final"), fr.last, fr.cost);
+```
+
+Opções de `step()`: `system`, `llm` (outro modelo só para o passo), `output`
+(nome da variável, padrão o nome do passo) e `schema` (usa `parse()`; leia com
+`fr.parsed("passo")`). Passo com nome repetido vira `nome#2` em `completions`,
+sem perder o custo. `FlowResult` tem `outputs`, `context`, `completions`, `last`,
+`usage`, `cost` e `costComplete`. `new Flow(llm, { debug: true })` imprime cada
+passo no stderr.
+
+## Graph
+
+`Graph` tem roteamento condicional, blocos paralelos e ciclos com teto.
+
+```ts
+const g = new Graph()
+  .node("triagem", llm, "Classifique como 'vendas' ou 'suporte': {{ msg }}")
+  .node("vendas", llm, "Responda como vendedor: {{ msg }}")
+  .node("suporte", llm, "Ajude com: {{ msg }}")
+  .node("fecha", llm, "Feche o atendimento: {{ suporte }}")
+  .route("triagem", (ctx) => (String(ctx.triagem).includes("suporte") ? "suporte" : "vendas"))
+  .connect("suporte", "fecha");
+
+const gr = await g.run("triagem", { msg: "o app não abre" });
+console.log(gr.path, gr.get("fecha"), gr.durationsMs);
+```
+
+- `connect(de, para)` é a aresta fixa. No Python ela se chama `then()`; em JS esse
+  nome faria o `Graph` parecer uma Promise.
+- `route(de, (ctx) => próximo)`: devolver `null` encerra.
+- `new Graph({ maxSteps })` (padrão 50) corta ciclos que nunca terminam.
+
+Bloco paralelo: `parallel(nome, { ramo: [llm, prompt] }, opções)`. Cada ramo
+grava a saída numa variável com o nome do ramo.
+
+```ts
+const pg = new Graph()
+  .parallel(
+    "analises",
+    { riscos: [llm, "Riscos de {{ ideia }}"], custos: [llm, "Custos de {{ ideia }}"] },
+    { join: "sintese", onError: "skip", maxConcurrency: 4, summarize: true },
+  )
+  .node("sintese", llm, "Riscos: {{ riscos }}\nCustos: {{ custos }}\nConclua.");
+```
+
+- `onError: "raise"` (padrão): um ramo que falha derruba o run e os irmãos são
+  cancelados via `AbortSignal`. `"skip"`: o ramo fica vazio e vai para
+  `gr.failures`.
+- `maxConcurrency`: teto de ramos simultâneos.
+- `summarize`: `true` ou uma instrução; cada ramo resume a própria saída antes do
+  join. O resumo aparece como `ramo:resumo` em `completions` e entra no custo.
+
+`GraphResult` tem `outputs`, `completions`, `context`, `path`, `durationsMs`,
+`failures`, `parsed(nó)`, `usage`, `cost` e `costComplete`.
+
+## stepBack
+
+`stepBack(llm, pergunta)` gera uma pergunta mais ampla para recuperar contexto de
+fundo no RAG. Busque com as duas e junte os trechos.
+
+```ts
+const pergunta = "Quais são as opções de tratamento para catarata?";
+const ampla = await stepBack(llm, pergunta, { instructions: "Foco em medicina; responda em pt-BR." });
+const trechos = [...(await rag.search(pergunta)), ...(await rag.search(ampla))];
+```
+
+Opções: `instructions` (acrescenta ao prompt padrão), `prompt` (substitui o
+prompt inteiro; inclua a pergunta), `params` e `signal`. Nunca devolve vazio: sem
+structured output válido usa o texto cru e, por último, a própria pergunta.
+
+## Tools prontas (`jangada-ai/prebuilt`)
+
+O subpath traz tools prontas para passar em `tools` de um `Agent` ou de
+`complete()`. Cada uma existe como `Tool` (sufixo `Tool`, nome em snake_case
+para o modelo, igual ao Python) e como função async para chamar direto.
+
+```ts
+import { brTools, calculatorTool, currentDatetimeTool, fetchUrlTool } from "jangada-ai/prebuilt";
+
+const assistente = new Agent(llm, {
+  role: "Assistente",
+  tools: [calculatorTool, currentDatetimeTool, fetchUrlTool, ...brTools],
+});
+```
+
+| Tool | Chave |
+| --- | --- |
+| `calculatorTool`, `currentDatetimeTool` | nenhuma |
+| `fetchUrlTool`, `httpRequestTool` (só hosts públicos, até 5 MB) | nenhuma |
+| `wikipediaSearchTool` | nenhuma |
+| `tavilySearchTool` / `tavilyTool({ apiKey })` | `TAVILY_API_KEY` |
+| `braveSearchTool` / `braveTool({ apiKey })` | `BRAVE_API_KEY` |
+| `openweatherTool` / `weatherTool({ apiKey })` | `OPENWEATHER_API_KEY` |
+| `brTools`: `validarCpfTool`, `validarCnpjTool`, `validarDocumentoTool`, `consultarCepTool`, `consultarCnpjTool`, `consultarBancoTool`, `feriadosNacionaisTool`, `consultarDddTool`, `taxasJurosTool` | nenhuma (BrasilAPI) |
+
+Falha de rede ou da API volta como texto para o modelo. Só a falta de chave
+lança `Error`. As fábricas com `apiKey` servem para edge, onde não há variável de
+ambiente.

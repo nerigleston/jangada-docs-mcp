@@ -1,0 +1,181 @@
+---
+title: "Erros, retry e fallback"
+description: "Hierarquia de erros normalizada do jangada-ai, classify, retry com backoff no mesmo modelo e fallback entre providers e modelos."
+---
+
+Cada SDK lança erros com nomes e formatos diferentes. A jangada converte todos
+para uma hierarquia única, com `statusCode` quando houver. Nenhum erro nativo de
+SDK escapa dos adapters: o original fica em `original` (e em `cause`).
+
+```ts
+import { LLM, LLMError, NotFoundError } from "jangada-ai";
+
+try {
+  await new LLM("openai", "modelo-inexistente").complete("oi");
+} catch (e) {
+  if (e instanceof NotFoundError) console.log(e.statusCode); // 404
+  else if (e instanceof LLMError) console.log(e.category, e.provider, e.message);
+  else throw e;
+}
+```
+
+Todo `LLMError` tem `provider`, `statusCode`, `original` e `category` (uma string
+estável, boa para log e métrica).
+
+## Hierarquia
+
+Todas as classes herdam de `LLMError`.
+
+| Classe | `category` | Origem típica | Retry | Fallback |
+| --- | --- | --- | --- | --- |
+| `RateLimitError` | `rate_limit` | 429 | sim | sim |
+| `APITimeoutError` | `timeout` | timeout, 408 | sim | sim |
+| `APIConnectionError` | `connection` | falha de rede | sim | sim |
+| `ServerError` | `server` | 5xx, 409 | sim | sim |
+| `OverloadedError` | `overloaded` | 529 (Anthropic), herda de `ServerError` | sim | sim |
+| `NotFoundError` | `not_found` | 404 (modelo ou endpoint) | não | sim |
+| `OutputValidationError` | `output_validation` | `parse()` com JSON fora do schema | não | sim |
+| `AuthError` | `auth` | 401, 403 | não | não |
+| `BadRequestError` | `bad_request` | 400, 413, 422 | não | não |
+| `TruncatedError` | `truncated` | resposta cortada por `maxTokens` no `parse()` | não | não |
+| `UnsupportedError` | `unsupported` | recurso que o provider não tem | não | não |
+| `GuardrailError` | `guardrail` | guardrail com `raiseOnBlock: true` | não | não |
+| `ProviderError` | `provider` | qualquer outro erro do SDK | não | não |
+
+Fora da hierarquia: `SchemaValidationError` (validação do schema pela própria lib;
+vira `OutputValidationError` no `parse`) e `DocumentError` (extração de arquivo,
+ver [Vision, áudio e documentos](/docs/js/vision-documents)).
+
+### `TruncatedError`
+
+Quando o modelo atinge `maxTokens` antes de fechar o JSON, o `parse()` lança
+`TruncatedError` antes de validar, com a dica de aumentar `maxTokens`. Ela fica
+fora de `TRANSIENT` e de `DEFAULT_FAILOVER` porque repetir dá o mesmo corte. No
+`complete()` a resposta cortada volta normal, com `finishReason === "length"`.
+
+```ts
+import { TruncatedError } from "jangada-ai";
+import { z } from "zod";
+
+const Resumo = z.object({ topicos: z.array(z.string()) });
+
+try {
+  await llm.parse("Liste os tópicos do texto.", Resumo, { params: { maxTokens: 200 } });
+} catch (e) {
+  if (e instanceof TruncatedError) {
+    // tente de novo com mais espaço
+    await llm.parse("Liste os tópicos do texto.", Resumo, { params: { maxTokens: 8192 } });
+  }
+}
+```
+
+## `classify`
+
+`classify(erro, provider)` converte qualquer erro num `LLMError`. Os adapters já
+usam; chame você mesmo ao integrar um SDK ou API próprios. A decisão segue esta
+ordem:
+
+1. status HTTP (`status`, `statusCode`, `status_code`, `code`, `$metadata.httpStatusCode` do AWS SDK ou `response.status`);
+2. nome da classe do erro (`RateLimit`, `Timeout`, `Connection`, `NotFound`...);
+3. código de rede do Node em `cause.code` (`ECONNRESET`, `ENOTFOUND`, `UND_ERR_CONNECT_TIMEOUT`...);
+4. sem pista: `ProviderError`.
+
+```ts
+import { classify, RateLimitError } from "jangada-ai";
+
+const err = classify({ status: 429, message: "slow down" }, "meu-provider");
+console.log(err instanceof RateLimitError, err.statusCode); // true 429
+```
+
+Com `{ request: true }`, um erro de validação (Zod) vindo da montagem da
+requisição vira `BadRequestError` em vez de `OutputValidationError`, para não
+disparar fallback por um parâmetro inválido.
+
+## Retry e fallback
+
+Cada `LLM` é um candidato. O cliente tenta o primeiro `maxRetries + 1` vezes, com
+backoff exponencial, e só então passa ao próximo da lista `fallbacks`:
+
+```
+[primário] tenta → retry → retry → falhou → [reserva] tenta → retry → ...
+```
+
+```ts
+import { LLM } from "jangada-ai";
+
+const llm = new LLM("openai", "gpt-4o-mini", {
+  maxRetries: 2, // tentativas extras no mesmo candidato
+  backoffBaseMs: 500, // atraso base, em ms
+  backoffMaxMs: 8000, // teto do atraso
+  jitter: true, // multiplica o atraso por 0.5x a 1.5x
+  fallbacks: [new LLM("anthropic", "claude-haiku-4-5"), new LLM("gemini", "gemini-2.5-flash")],
+});
+
+const comp = await llm.complete("Diga oi em tupi.");
+console.log(`${comp.provider}/${comp.model}`); // quem respondeu
+```
+
+`withFallback(...llms)` devolve uma cópia com fallbacks extras, sem alterar o
+original:
+
+```ts
+const primario = new LLM("openai", "gpt-4o-mini");
+const comReserva = primario.withFallback(new LLM("anthropic", "claude-haiku-4-5"));
+```
+
+Regras:
+
+- Retry acontece nos erros de `backoffOn` (padrão `TRANSIENT`: rate limit,
+  timeout, conexão e 5xx, inclusive 529).
+- Fallback acontece nos erros de `retryOn` (padrão `DEFAULT_FAILOVER`: os
+  transitórios, mais `NotFoundError` e `OutputValidationError`).
+- `NotFoundError` não repete no mesmo candidato, mas cai para o próximo.
+- `AuthError` e `BadRequestError` falham na hora: trocar de provider não corrige
+  chave errada nem payload inválido.
+- Cada candidato usa os próprios `maxRetries` e `backoffOn`; `retryOn` vem do
+  `LLM` principal.
+- Erro que não é `LLMError` (bug, SDK não instalado) sobe direto, sem retry.
+
+O atraso da tentativa `n` (a partir de 0) é `min(backoffBaseMs * 2^n, backoffMaxMs)`,
+com jitter se ligado.
+
+### Personalizar as listas
+
+`TRANSIENT` e `DEFAULT_FAILOVER` são arrays de classes. Monte as suas e passe em
+`backoffOn` e `retryOn`:
+
+```ts
+import { AuthError, DEFAULT_FAILOVER, LLM, RateLimitError } from "jangada-ai";
+
+const llm = new LLM("openai", "gpt-4o-mini", {
+  retryOn: [...DEFAULT_FAILOVER, AuthError], // chave revogada? tenta o próximo provider
+  backoffOn: [RateLimitError], // só repete em 429
+  fallbacks: [new LLM("groq", "llama-3.3-70b-versatile")],
+});
+```
+
+`isInstanceOfAny(erro, classes)` testa um erro contra uma dessas listas.
+
+### Cancelamento
+
+Toda chamada aceita `signal`. Abortar interrompe a tentativa atual, a espera do
+backoff e os fallbacks que faltam; o erro lançado é o `reason` do sinal.
+
+```ts
+const ctrl = new AbortController();
+setTimeout(() => ctrl.abort(), 10_000);
+await llm.complete("Resuma o livro.", { signal: ctrl.signal });
+```
+
+### Onde vale cada regra
+
+| Método | Retry | Fallback |
+| --- | --- | --- |
+| `complete`, `parse`, `transcribe` | sim | sim |
+| `stream`, `streamComplete` | até o 1º pedaço | até o 1º pedaço |
+| `embed` | sim | não (vetores de modelos diferentes não se comparam) |
+
+Quando todos os candidatos de um `complete` ou `parse` falham, o erro final vai para a
+[observability](/docs/js/observability) como observation `ERROR` (uma por
+chamada, não por tentativa). Para ver cada tentativa no terminal, ligue
+`debug: true` (ver [Custo e cache](/docs/js/cost-cache#debug)).

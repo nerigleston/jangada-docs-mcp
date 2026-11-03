@@ -1,0 +1,142 @@
+---
+title: "Evaluation (evals)"
+description: "Dataset, Evaluator and evaluate() in the jangada-ai/eval subpath: measure quality and compare models by score, cost and latency, offline or pushing to the dashboard."
+---
+
+Evals are how you prove that switching models or providers did not hurt quality
+or blow up cost. You run a `target` over a `Dataset`, score it with
+`Evaluator`s (heuristic or LLM judge) and compare results by accuracy, cost and
+latency.
+
+It runs offline. Pushing to the dashboard is optional (`push: true`).
+
+```ts
+import { LLM } from "jangada-ai";
+import { Dataset, Evaluator, evaluate } from "jangada-ai/eval";
+```
+
+| Piece | Role |
+| --- | --- |
+| `Dataset` / `Example` | The cases: inputs and reference answer |
+| `Evaluator` | The score of an output (your function or an LLM judge) |
+| `evaluate()` | Runs the `target`, applies the evaluators and aggregates |
+| `ExperimentResult` | `runs`, `aggregate`, `pushed`, `pushError` |
+
+## Dataset
+
+An `Example` has `inputs` (what goes to the `target`), `reference` (optional
+expected answer) and `metadata`.
+
+```ts
+const ds = Dataset.fromRecords(
+  [
+    { inputs: { q: "Capital of France?" }, reference: "Paris" },
+    { inputs: { q: "2 + 2?" }, reference: "4" },
+  ],
+  { name: "questions" },
+);
+```
+
+`Dataset.fromJsonl(text, { name })` takes the file's text (one
+`{ "inputs": ..., "reference": ... }` line per example). The core does not read
+from disk; on Node, read it first:
+
+```ts
+import { readFile } from "node:fs/promises";
+
+const cases = Dataset.fromJsonl(await readFile("cases.jsonl", "utf8"), { name: "cases" });
+```
+
+`Dataset` is iterable and has `length`. `evaluate()` also accepts a plain array
+of examples.
+
+## Evaluators
+
+### Heuristic (`Evaluator.fn`)
+
+`(output, reference)` returns a `number`, a `boolean` (becomes 1 or 0) or
+`{ score, comment, metadata }`. It can be async.
+
+```ts
+const exact = Evaluator.fn("exact", (out, ref) => out.text.trim().toLowerCase() === String(ref).toLowerCase());
+```
+
+`out` is what the `target` returned, usually a `Completion` (`text`, `parsed`,
+`cost`). `ref` is the example's `reference`.
+
+### LLM judge (`Evaluator.judge`)
+
+An LLM scores the output with `parse()` on a fixed `{ score, reason }` schema.
+The score is clamped to 0..1, `reason` goes to `comment` and the judge's cost
+counts toward `evalCostUsd`.
+
+```ts
+const useful = Evaluator.judge(
+  "useful",
+  "Does the answer address the question correctly and helpfully?",
+  new LLM("openai", "gpt-4o-mini"), // cheap judge, separate from the target
+);
+```
+
+## evaluate()
+
+```ts
+const llm = new LLM("openai", "gpt-4o-mini");
+const res = await evaluate(ds, (ex) => llm.complete(String(ex.inputs.q)), [exact, useful], {
+  name: "baseline",
+  maxConcurrency: 4,
+});
+console.log(res.aggregate);
+// { exact: 0.9, useful: 0.95, costUsd: 0.0021, evalCostUsd: 0.0004, p50_ms: 740, count: 2, errors: 0, evalErrors: 0 }
+```
+
+- `aggregate`: mean per evaluator, `costUsd` (target cost), `evalCostUsd` (judge
+  cost), `p50_ms`, `count`, `errors` and `evalErrors`.
+- `res.runs`: one `RunRecord` per example with `inputs`, `reference`, `output`,
+  `scores`, `costUsd`, `evalCostUsd`, `latencyMs`, `error` and `evalErrors`.
+- A `target` that throws becomes a run with `error`. An evaluator that throws
+  leaves the score as `null` and records the error in `evalErrors`. Neither one
+  breaks the experiment.
+- `maxConcurrency`: examples in parallel. Without it, all run at once.
+
+## Comparing models
+
+```ts
+const target = (provider: string, model: string) => {
+  const m = new LLM(provider, model);
+  return (ex: { inputs: Record<string, unknown> }) => m.complete(String(ex.inputs.q));
+};
+
+const gpt = await evaluate(ds, target("openai", "gpt-5"), [exact, useful], { name: "gpt5" });
+const flash = await evaluate(ds, target("gemini", "gemini-3-flash"), [exact, useful], { name: "flash" });
+console.table([gpt.aggregate, flash.aggregate]);
+```
+
+## Pushing to the dashboard
+
+With `push: true`, the experiment goes to `POST /v1/experiments` using the same
+configuration as [observability](/en/docs/js/observability): key in
+`JANGADA_OBSERVABILITY_API_KEY` and endpoint in `JANGADA_OBSERVABILITY_ENDPOINT`
+(default `https://api.jangada.dev.br`). It shows up in the dashboard under the
+Experiments and Datasets tabs.
+
+```ts
+const pushed = await evaluate(ds, target("openai", "gpt-5"), [exact, useful], {
+  name: "gpt5",
+  push: true,
+  targetInfo: { provider: "openai", model: "gpt-5" },
+});
+console.log(pushed.pushed, pushed.pushError); // true null
+```
+
+Push is best-effort: without a key or on a network failure, `pushed` stays
+`false` and the reason goes to `pushError`. Nothing is thrown.
+
+## Differences from Python
+
+- Async only: `evaluate` is Python's `aevaluate`, and the `target` may return a
+  Promise.
+- `fromJsonl` takes the file's text, not its path.
+- The summary is `res.aggregate` (in Python, `res.summary()`).
+- Arguments are positional: `evaluate(data, target, evaluators, options)`.
+- `RunRecord` does not store the `traceId` of the trace that produced the output.

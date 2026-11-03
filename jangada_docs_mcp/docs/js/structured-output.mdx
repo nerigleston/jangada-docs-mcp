@@ -1,0 +1,178 @@
+---
+title: "Structured output"
+description: "parse() devolve um objeto validado e tipado a partir de um schema Zod, de outra lib Standard Schema ou de JSON Schema puro."
+---
+
+`parse()` pede ao modelo uma resposta no formato de um schema e devolve a
+`Completion` com `parsed` já validado. O mesmo código funciona em todos os
+providers; cada adapter usa o mecanismo nativo dele por baixo.
+
+```ts
+import { LLM } from "jangada-ai";
+import * as z from "zod";
+
+const Pessoa = z
+  .object({ nome: z.string(), idade: z.number().int() })
+  .meta({ title: "Pessoa" });
+
+const llm = new LLM("openai", "gpt-4o-mini");
+const comp = await llm.parse("Extraia: João tem 30 anos.", Pessoa);
+
+comp.parsed; // { nome: "João", idade: 30 }, tipado como { nome: string; idade: number }
+comp.text;   // o JSON bruto devolvido pelo modelo
+comp.cost;   // custo estimado, como no complete()
+```
+
+- `parsed` é o valor devolvido pelo validador do schema (com os defaults e
+  transformações do Zod aplicados). O tipo é inferido do schema.
+- Se o SDK não preencher o objeto, a lib faz o `JSON.parse` do texto e valida.
+  Cercas de código markdown em volta do JSON (com ou sem `json`) são toleradas.
+- O `title` do schema vira o nome enviado à API (só letras, números, `_` e `-`;
+  sem título, o nome é `resposta`). A `description` também vai, quando existe.
+
+## Assinatura
+
+```text
+llm.parse(prompt, schema, opções?)
+```
+
+As opções são as mesmas do `complete()` (`system`, `variables`, `history`,
+`images`, `files`, `params`, `signal`, `trace`), menos `tools`, `toolChoice` e
+`mcpServers`. Vision e documentos funcionam na mesma chamada:
+
+```ts
+import { readDocument } from "jangada-ai/node";
+
+const NotaFiscal = z
+  .object({
+    emitente: z.string(),
+    total: z.number(),
+    itens: z.array(z.object({ descricao: z.string(), valor: z.number() })),
+  })
+  .meta({ title: "NotaFiscal" });
+
+const nota = await llm.parse("Extraia os dados da nota.", NotaFiscal, {
+  files: [await readDocument("nota.pdf")],
+  params: { maxTokens: 16384 },
+});
+```
+
+## Schemas aceitos
+
+### Zod e Standard Schema
+
+O caminho principal é qualquer schema que siga a spec
+[Standard Schema](https://standardschema.dev) e exponha JSON Schema
+(`~standard.jsonSchema`). O Zod faz isso a partir da versão 4.2. Outras libs que
+implementem as duas specs (Valibot, ArkType) funcionam do mesmo jeito. A lib não
+importa o Zod: ela só lê a interface `~standard`, então você usa a versão
+instalada no seu projeto.
+
+Schema Standard sem `~standard.jsonSchema` (Zod 3, por exemplo) lança
+`TypeError` pedindo Zod 4.2+ ou `jsonSchema()`.
+
+### `jsonSchema()`: JSON Schema com validador opcional
+
+Sem lib de validação, descreva o formato em JSON Schema e, se quiser, passe uma
+função de validação. Ela recebe o objeto já parseado e devolve o valor final (ou
+lança):
+
+```ts
+import { jsonSchema } from "jangada-ai";
+
+interface Cidade {
+  nome: string;
+  uf: string;
+}
+
+const CidadeSchema = jsonSchema<Cidade>(
+  {
+    type: "object",
+    properties: { nome: { type: "string" }, uf: { type: "string" } },
+    required: ["nome", "uf"],
+  },
+  {
+    name: "Cidade",
+    validate: (v) => {
+      const c = v as Cidade;
+      if (c.uf.length !== 2) throw new Error("uf deve ter 2 letras");
+      return c;
+    },
+  },
+);
+
+const comp = await llm.parse("Qual a capital de Pernambuco?", CidadeSchema);
+comp.parsed?.uf; // "PE"
+```
+
+Um erro lançado no `validate` vira `OutputValidationError`, como uma falha do Zod.
+
+### JSON Schema cru
+
+Um objeto JSON Schema solto também é aceito. Nesse caso não há validação além
+do `JSON.parse`, e `parsed` fica tipado como `unknown`:
+
+```ts
+const comp = await llm.parse("Liste 3 frutas.", {
+  type: "object",
+  title: "Frutas",
+  properties: { frutas: { type: "array", items: { type: "string" } } },
+  required: ["frutas"],
+});
+```
+
+## Erros
+
+| Situação | Erro | Retry / fallback |
+| --- | --- | --- |
+| JSON fora do schema, ou o modelo recusou gerar | `OutputValidationError` | não repete no mesmo modelo; cai para o próximo fallback |
+| Resposta cortada por `maxTokens` | `TruncatedError` | nenhum: aumente `maxTokens` |
+
+`OutputValidationError` está em `DEFAULT_FAILOVER` e fora de `TRANSIENT`: repetir
+o mesmo modelo tende a repetir o erro, mas outro modelo pode acertar. Com
+fallbacks configurados, `parse()` cobre erro de API e resposta malformada:
+
+```ts
+import { OutputValidationError } from "jangada-ai";
+
+const llm = new LLM("groq", "llama-3.3-70b-versatile", {
+  fallbacks: [new LLM("openai", "gpt-4o-mini")],
+});
+
+try {
+  const comp = await llm.parse("Ana tem 30 anos.", Pessoa);
+} catch (e) {
+  if (e instanceof OutputValidationError) {
+    console.error(e.message);  // "[openai] saída não casa com o schema: idade: ..."
+    console.error(e.original); // SchemaValidationError, com .issues do validador
+  }
+}
+```
+
+`TruncatedError` é lançado antes da validação, quando `finishReason` é
+`"length"`, com a mensagem "Aumente maxTokens". `maxTokens` já tem padrão 8192;
+extrações maiores precisam de um valor explícito.
+
+## Como cada provider resolve
+
+| Provider | Mecanismo |
+| --- | --- |
+| OpenAI, Azure | `response_format` json_schema estrito |
+| Groq, OpenRouter | json_schema; se o modelo não aceitar, JSON Object mode com o schema na instrução |
+| DeepSeek | JSON Object mode |
+| Anthropic, Bedrock | tool forcing (a tool fixa recebe o schema) |
+| Gemini, Vertex | `responseMimeType: "application/json"` + `responseJsonSchema` |
+| Mistral | `responseFormat` json_schema estrito |
+| Ollama | `format` com o JSON Schema |
+
+No json_schema estrito (OpenAI, Azure, Groq, OpenRouter e Mistral), a lib ajusta
+o schema ao que a API exige: `additionalProperties: false` nos objetos e os campos
+em `required`. Na prática o modelo devolve todos os campos.
+
+`parse()` não aceita tools. No Python, o Gemini permite `parse()` com tools
+nativas; no JS a assinatura de `parse()` não tem `tools`. Para combinar busca e
+formato, chame `complete({ tools: [webSearch()] })` e depois `parse()` sobre o
+texto.
+
+No Python o schema é uma classe Pydantic e `parsed` é uma instância dela. No JS
+`parsed` é um objeto simples, com o tipo inferido do schema.

@@ -1,0 +1,138 @@
+---
+title: "A2A (Agent2Agent)"
+description: "Exponha um Agent do jangada-ai como servidor A2A: A2AHandler e buildA2aHandler em jangada-ai/a2a (web-standard, roda em edge) e serveA2a em jangada-ai/node."
+---
+
+O [A2A](https://a2a-protocol.org) é o protocolo para um agente chamar outro pela
+rede. O `jangada-ai` expõe um `Agent` como servidor A2A no binding JSON-RPC 2.0,
+sem nenhuma dependência extra:
+
+- `jangada-ai/a2a`: `A2AHandler` (a lógica do protocolo) e `buildA2aHandler`
+  (handler `(req: Request) => Promise<Response>` com as rotas). Roda em Node, Bun,
+  Deno, Cloudflare Workers, Hono e Next.
+- `jangada-ai/node`: `serveA2a`, que sobe um `node:http` com o mesmo handler.
+
+A lib não traz cliente A2A: qualquer cliente HTTP que fale JSON-RPC serve.
+
+## Subir no Node
+
+```ts
+import { Agent, LLM } from "jangada-ai";
+import { serveA2a } from "jangada-ai/node";
+
+const sofia = new Agent(new LLM("openai", "gpt-4o-mini"), {
+  role: "Sofia",
+  goal: "responder dúvidas sobre pedidos",
+});
+
+const srv = await serveA2a(sofia, { port: 4000 });
+console.log(srv.url); // http://127.0.0.1:4000
+// ... depois: await srv.close();
+```
+
+`serveA2a(agentes, { host, port, path, contextFactory })` resolve quando o
+servidor está no ar. `host` padrão `127.0.0.1`, `port` padrão 8000 (0 escolhe uma
+porta livre).
+
+## Handler web-standard (edge)
+
+```ts
+import { A2AHandler, buildA2aHandler } from "jangada-ai/a2a";
+
+const handler = buildA2aHandler(new A2AHandler(sofia, { url: "https://app.exemplo/a2a" }));
+export default { fetch: handler };
+```
+
+`buildA2aHandler` aceita um agente, um `A2AHandler` ou uma lista deles. O 1º é o
+principal; os outros ficam em `/agents/{name}`.
+
+| Rota | O quê |
+| --- | --- |
+| `GET /.well-known/agent-card.json` (e o legado `/.well-known/agent.json`) | Agent Card do agente principal |
+| `GET /agents` | Catálogo (lista de Agent Cards) |
+| `POST {path}` (padrão `/`) | `message/send` (JSON), `message/stream` (SSE), `tasks/get`, `tasks/cancel` |
+| `POST /agents/{name}` | Idem, para um agente do catálogo |
+
+Uma chamada `message/send`:
+
+```bash
+curl -s http://127.0.0.1:4000/ -H 'content-type: application/json' -d '{
+  "jsonrpc": "2.0", "id": 1, "method": "message/send",
+  "params": { "message": { "role": "user", "parts": [{ "kind": "text", "text": "Cadê meu pedido?" }] } }
+}'
+```
+
+A resposta é uma `Task` com `contextId`, `status` e a resposta em
+`artifacts[0].parts[0].text`. Mande o mesmo `contextId` na próxima mensagem para
+continuar a conversa: o handler guarda o histórico e passa ao `agent.run` como
+`history`.
+
+## Opções do `A2AHandler`
+
+| Opção | Padrão | O que faz |
+| --- | --- | --- |
+| `agent` | | Agente fixo (também pode vir como 1º argumento) |
+| `resolver(ctx)` | | Monta o agente por requisição (exclui `agent`, exige `name`) |
+| `name` | `agent.role` | Nome no card e na rota `/agents/{name}` |
+| `description`, `url` | | Dados do card |
+| `version` | `"1.0.0"` | Versão anunciada no card |
+| `store` | `Map` em memória | Histórico por conversa. `get`/`set` podem ser async (Redis, KV) |
+| `tenantKey(ctx)` | | Isola histórico e tasks por tenant |
+| `maxTasks`, `taskTtlMs` | 1000, 1 h | Registro de tasks para `tasks/get` e `tasks/cancel`. `null` desliga |
+| `maxContexts`, `contextTtlMs` | 1000, 1 h | Limite do store padrão. `null` desliga |
+| `securitySchemes`, `security` | | Anunciados no card |
+| `onError(erro, método)` | `console.error` | Recebe as falhas internas |
+
+O agente pode ser qualquer objeto com `role`, `run`, `stream` e `card`; o `Agent`
+da lib já atende.
+
+## Multi-tenant
+
+O `resolver` recebe o contexto da requisição e devolve o agente daquele request.
+Por padrão o contexto é `{ headers, auth }` (`requestContext`), com os headers em
+minúsculas e o `Authorization` cru. A lib não decodifica JWT: faça isso num
+`contextFactory`. Se o `contextFactory` devolver ou lançar um `Response`, ele é
+enviado como está, o que serve para recusar com 401.
+
+```ts
+import { A2AHandler, type A2aRequestContext, buildA2aHandler, requestContext } from "jangada-ai/a2a";
+
+// montarSofia(tenant) é sua: devolve um Agent com as tools daquele tenant
+const handler = new A2AHandler<A2aRequestContext>({
+  name: "Sofia",
+  resolver: (ctx) => montarSofia(ctx?.auth?.replace(/^Bearer /, "") ?? ""),
+  tenantKey: (ctx) => ctx.auth ?? "",
+});
+
+const app = buildA2aHandler(handler, {
+  contextFactory: (req) => {
+    if (!req.headers.get("authorization")) return new Response("sem token", { status: 401 });
+    return requestContext(req);
+  },
+});
+```
+
+Sem contexto (a descoberta em `/.well-known/agent-card.json`), um handler com
+`resolver` devolve um card estático do serviço, sem skills.
+
+## Erros JSON-RPC
+
+| Código | Quando |
+| --- | --- |
+| `-32700` | JSON inválido |
+| `-32600` | Corpo que não é uma requisição JSON-RPC |
+| `-32601` | Método não suportado |
+| `-32602` | Mensagem ausente ou sem texto |
+| `-32001` | Task inexistente, expirada ou de outro tenant |
+| `-32002` | Cancelar uma task já terminada |
+| `-32603` | Falha interna (mensagem genérica; o detalhe vai para `onError`) |
+
+## Diferenças em relação ao Python
+
+- No Python o servidor é um app Starlette (`build_a2a_app`). Aqui é um handler
+  `Request => Response` (`buildA2aHandler`) ou o `serveA2a` no Node.
+- `serveA2a` devolve uma Promise com `close()`.
+- TTLs em milissegundos (`taskTtlMs`, `contextTtlMs`).
+- `tenant_key` e `context_factory` viram `tenantKey` e `contextFactory`.
+
+Veja também [Agentes](/docs/js/agents) e o `card()` do `Agent`.

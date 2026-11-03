@@ -1,0 +1,210 @@
+---
+title: "Tools (function calling)"
+description: "Defina tools com tool(), rode o loop de tool calls e ligue as tools nativas que o provider executa, como busca na web e execução de código."
+---
+
+Existem dois tipos de tool:
+
+- Function tools: o modelo pede a chamada, o seu código executa e devolve o
+  resultado.
+- Tools nativas: o provider executa do lado dele (busca na web, leitura de URL,
+  execução de código) e a resposta já volta pronta.
+
+As duas vão na mesma opção `tools` do `complete()` e do `streamComplete()`.
+
+## Definindo uma tool
+
+```ts
+import { tool } from "jangada-ai";
+import * as z from "zod";
+
+const clima = tool({
+  name: "clima",
+  description: "Temperatura atual de uma cidade brasileira",
+  parameters: z.object({ cidade: z.string().describe("nome da cidade") }),
+  execute: async ({ cidade }) => ({ cidade, temperatura: 31, ceu: "limpo" }),
+});
+```
+
+- `parameters` aceita Zod (ou outro Standard Schema), `jsonSchema(...)` ou um
+  objeto JSON Schema cru. Com Zod, `execute` recebe os argumentos tipados.
+- Sem `description`, a lib usa a do schema, se houver.
+- `execute` é opcional: uma tool sem ele só descreve o formato para o modelo.
+- `annotations` (opcional) leva as dicas MCP (`readOnlyHint`,
+  `destructiveHint`...) quando a tool é servida por MCP.
+
+Em `tools` também vale um objeto simples `{ name, description, parameters }`.
+Uma função solta não vira tool: JS não tem type hints em runtime para gerar o
+schema, então a lib lança `TypeError` pedindo `tool()`. No Python, uma função
+com type hints vira tool sozinha.
+
+## O loop de tool calls
+
+`complete()` não executa tools: ele devolve as chamadas pedidas em
+`comp.toolCalls`. O ciclo é:
+
+1. chamar o modelo com `tools`;
+2. se vier `toolCalls`, executar cada uma e montar os resultados;
+3. reenviar o histórico (pergunta, resposta com as chamadas, resultados) e
+   repetir até o modelo responder sem pedir tool.
+
+```ts
+import { LLM, type Message } from "jangada-ai";
+
+const llm = new LLM("openai", "gpt-4o-mini");
+const history: Message[] = [{ role: "user", content: "Como está o tempo em Recife?" }];
+
+for (let rodada = 0; rodada < 5; rodada++) {
+  const comp = await llm.complete(null, { history, tools: [clima] });
+  if (!comp.toolCalls.length) {
+    console.log(comp.text);
+    break;
+  }
+  history.push(comp.assistantMessage()); // texto + tool calls, com o metadata do provider
+  const resultados = [];
+  for (const call of comp.toolCalls) {
+    try {
+      const args = await clima.parseArgs(call.args); // valida com o Zod
+      resultados.push(call.result(await clima.execute?.(args)));
+    } catch (e) {
+      resultados.push(call.result(String(e), { isError: true }));
+    }
+  }
+  history.push({ role: "tool", content: resultados });
+}
+```
+
+Peças:
+
+| Peça | O que é |
+| --- | --- |
+| `comp.toolCalls` | `ToolCall[]`, cada um com `id`, `name`, `args` e `metadata` |
+| `tool.parseArgs(args)` | valida e converte os argumentos pelo schema da tool |
+| `call.result(saida, { isError })` | monta o `ToolResultPart`; objetos viram JSON |
+| `comp.assistantMessage()` | a mensagem do assistant para o histórico |
+| `Message.toolResults(...partes)` | atalho para `{ role: "tool", content: [...] }` |
+
+Use sempre `assistantMessage()` para guardar a resposta no histórico. Ele leva o
+`metadata` que alguns providers exigem de volta intacto (a `thought_signature`
+do Gemini 3, os blocos de thinking da Anthropic, os blocos das tools nativas).
+`prompt = null` faz a chamada continuar só a partir do `history`.
+
+Para não escrever o loop, use um [Agent](/docs/js/agents): `new Agent(llm, { tools: [clima] }).run("...")` roda o mesmo ciclo (até `maxIterations`, padrão
+8), com hooks `onToolCall`/`onToolResult`, e devolve texto, custo e o trace das
+chamadas. Com tools de um servidor MCP, `runAgent` de `jangada-ai/mcp` faz o
+mesmo (veja [MCP](/docs/js/mcp)).
+
+### `toolChoice`
+
+| Valor | Efeito |
+| --- | --- |
+| `"auto"` | o modelo decide (padrão dos providers) |
+| `"none"` | o modelo não chama tools |
+| `"required"` (ou `"any"`) | o modelo tem de chamar alguma tool |
+| `"clima"` | força a tool com esse nome |
+
+Qualquer outro valor (um objeto) vai cru para o SDK. Na Mistral com tools
+nativas, forçar uma tool pelo nome lança `UnsupportedError`. Modelos da
+Anthropic que não aceitam forced tool use também lançam `UnsupportedError`.
+
+## Tools nativas
+
+```ts
+import { LLM, webSearch } from "jangada-ai";
+
+const llm = new LLM("gemini", "gemini-2.5-flash");
+const comp = await llm.complete("Qual foi o último resultado do Sport Recife?", {
+  tools: [webSearch()],
+});
+
+console.log(comp.text);
+for (const c of comp.citations) console.log(`- ${c.title}: ${c.url}`);
+```
+
+| Função | O que liga |
+| --- | --- |
+| `webSearch({ maxUses, allowedDomains, blockedDomains, userLocation })` | busca na web |
+| `webFetch({ maxUses, allowedDomains, blockedDomains })` | leitura de URLs citadas no prompt (`urlContext` é o mesmo) |
+| `codeExecution({ container, files })` | execução de código no sandbox do provider |
+| `fileSearch(stores, { topK, filter })` | busca em arquivos indexados no provider |
+| `googleMaps({ lat, lng, enableWidget })` | grounding com Google Maps |
+| `computerUse({ environment, displayWidth, displayHeight })` | pedidos de ação de tela (o seu código executa) |
+| `imageGeneration()` | geração de imagem como tool |
+| `nativeTool(provider, spec)` | o objeto nativo do SDK, sem tradução |
+
+Opções desconhecidas passam direto para o payload nativo. `providerOverrides`
+mescla opções só num provider:
+
+```ts
+webSearch({
+  maxUses: 3,
+  providerOverrides: { openrouter: { engine: "exa" } },
+});
+```
+
+### Matriz por provider
+
+| Provider | `webSearch` | `webFetch` | `codeExecution` | `fileSearch` | outras |
+| --- | --- | --- | --- | --- | --- |
+| Gemini | sim | sim | sim | sim | `googleMaps`, `computerUse` |
+| Vertex | sim | sim | sim | sim | `googleMaps`, `computerUse` |
+| Anthropic | sim | sim | sim | não | `computerUse` só via `nativeTool` |
+| OpenAI, Azure | sim | não | sim | sim | `imageGeneration`, `computerUse` |
+| Groq | `groq/compound*` e `openai/gpt-oss-*` | só `groq/compound*` | `groq/compound*` e `openai/gpt-oss-20b`/`120b` | não | |
+| OpenRouter | plugin `web` | não | não | não | |
+| DeepSeek | não | não | não | não | nem `nativeTool` |
+| Mistral | sim (`premium: true` usa a busca premium) | não | sim | sim (stores = library ids) | `imageGeneration` |
+| Bedrock | Amazon Nova Premier e Nova 2 | não | Nova 2 | não | |
+| Ollama | executada pelo adapter | executada pelo adapter | não | não | |
+
+"não" = `UnsupportedError` antes da chamada, com a lista do que o provider
+aceita. A lib nunca ignora uma tool em silêncio.
+
+Restrições:
+
+- OpenAI e Azure: com tool nativa, a chamada vai pela Responses API. A busca
+  não aceita `blockedDomains`.
+- Gemini: `allowedDomains` não existe na busca; `blockedDomains` vira
+  `excludeDomains`. Misturar tool nativa com function tool funciona no Gemini e
+  dá `UnsupportedError` no Vertex.
+- Anthropic: `stop_reason: "pause_turn"` é continuado automaticamente (até 5
+  vezes, somando usage e custo).
+- Groq: `groq/compound*` não aceita function tools junto com as embutidas.
+- Mistral: as tools nativas só existem na Conversations API, e a chamada vai
+  por lá. Function tools funcionam junto.
+- Ollama: `webSearch()` e `webFetch()` viram function tools que o adapter
+  executa pela API da Ollama Cloud (exige `OLLAMA_API_KEY`).
+- `parse()` não aceita tools.
+- `computerUse()`: a lib expõe o pedido de ação em `serverToolCalls`, mas não
+  executa a ação nem tira o screenshot.
+- Chamadas com tools não entram no cache.
+
+### O que volta na `Completion`
+
+- `comp.text`: a resposta final, já usando o resultado da tool.
+- `comp.citations`: `{ url, title, citedText, start, end, source }` de cada fonte.
+- `comp.serverToolCalls`: o que o provider executou (`type`, `input`, `output`).
+- `comp.usage.serverToolRequests`: contagem por tipo (ex.: `{ web_search: 2 }`),
+  usada no custo quando há taxa por uso registrada.
+
+Em conversa de vários turnos, guarde a resposta com `comp.assistantMessage()`:
+os blocos nativos que a API exige de volta vão no `metadata`.
+
+## Tools prontas
+
+`jangada-ai/prebuilt` traz tools prontas para usar em `tools` ou num `Agent`:
+
+```ts
+import { brTools, calculatorTool, currentDatetimeTool } from "jangada-ai/prebuilt";
+
+await llm.complete("Que dia é hoje e quanto é 17% de 2.340?", {
+  tools: [calculatorTool, currentDatetimeTool],
+});
+await llm.complete("O CEP 50030-230 é de qual bairro?", { tools: [...brTools] });
+```
+
+Há calculadora e data e hora; `brTools`, com as tools do Brasil que não pedem
+chave (validação de CPF/CNPJ, CEP, CNPJ, bancos, feriados, DDD e taxas de juros,
+via BrasilAPI); Wikipedia, Brave, Tavily e OpenWeather; e requisição HTTP
+(`fetchUrlTool`, `httpRequestTool`, com bloqueio de IPs internos). As que usam
+serviço com chave leem do ambiente (`BRAVE_API_KEY`, por exemplo) ou de `apiKey`.

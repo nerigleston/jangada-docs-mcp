@@ -1,0 +1,109 @@
+---
+title: "Diferenças em relação ao Python"
+description: "O que muda entre o jangada-ai do npm e a lib Python: async, schemas, nomes em camelCase, subpaths, leitura de arquivos, unidades de tempo e diferenças por provider."
+---
+
+O pacote `jangada-ai` do npm segue o comportamento da lib Python: mesmos
+providers, mesma política de retry e fallback, mesmo contrato de usage, mesma
+tabela de preços. Comportamento diferente do Python é tratado como bug, exceto
+nas diferenças listadas aqui, que existem por causa do runtime ou das convenções
+de JavaScript.
+
+## Linguagem e API
+
+| Tema | Python | JavaScript / TypeScript |
+| --- | --- | --- |
+| Sync e async | `complete` e `acomplete`, `stream` e `astream` | só async: `complete` devolve `Promise`, `stream` devolve `AsyncIterable` |
+| Nomes | snake_case (`max_tokens`, `tool_calls`, `with_fallback`) | camelCase (`maxTokens`, `toolCalls`, `withFallback`) |
+| Opções | kwargs (`complete(p, images=[...])`) | objeto no último argumento (`complete(p, { images: [...] })`) |
+| Variáveis do template | `complete(prompt, nome="Ana")` | `complete(prompt, { variables: { nome: "Ana" } })` |
+| Template com objeto | `str(valor)` | objetos e arrays viram JSON |
+| Structured output | classe Pydantic | Zod, Standard Schema (Valibot, ArkType) ou `jsonSchema()` |
+| Tools | função vira tool pela assinatura | `tool({ name, parameters, execute })` |
+| Bytes | `bytes` | `Uint8Array` |
+| Cancelamento | não tem | `signal?: AbortSignal` em toda chamada de rede |
+| Tempo | segundos (`backoff_base`, `ttl`, `poll_interval`) | milissegundos (`backoffBaseMs`, `ttlMs`, `pollIntervalMs`, `timeoutMs`) |
+| Usage | `input_tokens`, `cache_read_tokens` | `inputTokens`, `cacheReadTokens` (o payload de observability converte) |
+| `Graph` | `graph.then(a, b)` | `graph.connect(a, b)` (um método `then` faria `await graph` quebrar) |
+| Contexto de `Flow`/`Graph` | `run(**ctx)`, com nomes reservados | `run(ctx)`, objeto separado, sem nomes reservados |
+| Ramos paralelos com falha | cancela as tasks asyncio | cancela os ramos via `AbortSignal` |
+| Fechar clientes | `close()`/`aclose()` e `with LLM(...)` | `await llm.close()` ou `await using llm = new LLM(...)` |
+
+## Pacote e runtime
+
+O núcleo roda em Node 22+, Bun, Deno e edge (Cloudflare Workers, Vercel Edge),
+por isso não toca o disco. O que depende do Node fica em subpaths.
+
+| Import | Conteúdo |
+| --- | --- |
+| `jangada-ai` | `LLM`, erros, preços, cache, guardrails, vision, documentos, `Flow`, `Graph`, `Agent`, `Squad`, observability, prompts |
+| `jangada-ai/node` | `.env`, `readImage`, `readAudio`, `readDocument`, `runInSession`, `serveMcp`, `serveA2a` |
+| `jangada-ai/mcp` | cliente e servidor MCP, Code Mode |
+| `jangada-ai/rag` | `RAG`, chunking, rerank, stores |
+| `jangada-ai/eval` | `Dataset`, `Evaluator`, `evaluate` |
+| `jangada-ai/prebuilt` | tools prontas |
+| `jangada-ai/a2a` | servidor A2A web-standard |
+
+| Tema | Python | JavaScript / TypeScript |
+| --- | --- | --- |
+| `.env` | carregado no `import jangada_ai` | carregado no `import "jangada-ai/node"` ou com `loadEnv()`; desligue com `JANGADA_NO_DOTENV=1` |
+| Imagem do disco | `images=["foto.jpg"]`, `Image.from_path` | `readImage("foto.jpg")`; no núcleo, `ImagePart`, data URI ou URL |
+| Áudio do disco | `transcribe("audio.mp3")` | `transcribe(await readAudio("audio.mp3"))` |
+| Documento do disco | `files=["a.pdf"]`, `Document("a.pdf")` | `readDocument("a.pdf")` ou `new Document(bytes, { name })` |
+| Dependências de documento | `pypdf`, `python-docx`, `openpyxl` (extra `[files]`) | `unpdf`, `mammoth`, `exceljs`; `@napi-rs/canvas` para PDF por vision |
+| `Dataset.from_jsonl` | caminho do arquivo | `Dataset.fromJsonl(texto)` |
+| OCR da Mistral | aceita caminho | só bytes, URL ou data URI (caminho lança `UnsupportedError`) |
+| Cache do catálogo de preços | disco (`~/.cache/jangada`), TTL 1 dia | memória, TTL 1 dia por processo |
+| SDKs | extras do pip | `peerDependencies` opcionais, carregadas com `import()` só quando o provider é usado |
+
+## Observability e prompts
+
+| Tema | Python | JavaScript / TypeScript |
+| --- | --- | --- |
+| Sessão | `with observability_session(...) as trace_id` | `observabilitySession()` passada em `{ trace }`, ou `runInSession(opts, fn)` de `jangada-ai/node` |
+| Flush no fim | `atexit` | `beforeExit` com `jangada-ai/node`; em serverless, `await flushObservability()` |
+| Prompt usado no trace | `with p.use():` | `{ trace: p.trace() }` |
+| Contexto da requisição MCP | `ContextVar` | 2º argumento do `execute` (`ctx`) e `AsyncLocalStorage` quando existir |
+
+## Erros, cache e guardrails
+
+| Tema | Python | JavaScript / TypeScript |
+| --- | --- | --- |
+| `classify` | status HTTP e nome da classe | também `cause.code` de rede do Node (`ECONNRESET`, `UND_ERR_CONNECT_TIMEOUT`...) |
+| `SemanticCache` | `store` opcional (vector store do RAG) | busca em memória, sem `store` |
+| Guardrail próprio | `check_input` e `acheck_input`, `GuardResult(ok, reason)` | só `async checkInput`, devolve `{ ok, reason }` |
+| Reentrância do judge | `ContextVar` | marca na própria chamada do judge (funciona em qualquer runtime) |
+| `detectObjects` | aceita caminho; JSON fora do schema pode virar `OutputValidationError` | só `ImagePart`; leitura sempre tolerante (caixas inválidas são descartadas) |
+
+## Providers
+
+| Tema | Python | JavaScript / TypeScript |
+| --- | --- | --- |
+| Groq | SDK `groq` | SDK `openai` com a URL do Groq |
+| Ollama | SDK `ollama` | `fetch` direto na API nativa (roda em edge) |
+| Gemini, structured output | `response_schema` (Pydantic) | `responseJsonSchema` (JSON Schema) |
+| Gemini, profiles e extras | `thinking_budget`, `top_p` | `thinkingBudget`, `topP` (vocabulário do `@google/genai`) |
+| Gemini, embeddings | `embed(..., output_dimensionality=768)` | `embed(textos, { outputDimensionality: 768 })` |
+| Gemini com MCP | AFC do SDK; usage só da última resposta | loop da jangada; usage somado das rodadas |
+| Gemini Interactions | `poll_interval`/`timeout` em segundos, sync e async | `pollIntervalMs`/`timeoutMs`, só async, `signal` cancela o polling |
+| Mistral `parse` | `chat.parse` com Pydantic | `responseFormat` json_schema strict |
+| Mistral stream com tools nativas | `UnsupportedError` | chamada normal da Conversations API, texto de uma vez |
+| Mistral `toolChoice` por nome (Conversations API) | aceita | `UnsupportedError` (o SDK JS só aceita auto, none, any, required) |
+| Rerank Cohere e Voyage | SDKs | API HTTP direta |
+| BM25 do RAG | `rank_bm25` | implementação própria, mesma fórmula |
+| pgvector | uma conexão psycopg | `Pool` do `pg` (injetável), mesmo advisory lock do Python |
+
+## MCP e A2A
+
+| Tema | Python | JavaScript / TypeScript |
+| --- | --- | --- |
+| Code Mode | Python no sandbox Monty | JavaScript no QuickJS (`quickjs-emscripten`); só `return` devolve valor |
+| App HTTP do servidor MCP | Starlette ASGI | handler web-standard `Request => Response` (Node, Bun, Deno, Workers, Hono, Next) |
+| `serve_mcp` | bloqueia | `serveMcp()` devolve `{ url, port, close() }` |
+| `authToken` e `OPTIONS` | 401 também no preflight | `OPTIONS` passa sem token (clientes de navegador) |
+| `keepAlive` e HTTP 404 | 4xx não reconecta | 404 reconecta (sessão expirada, conforme a spec) |
+| SSRF nas tools prontas | resolve DNS e checa cada IP | checa o host literal; `setResolveHost` liga a checagem por DNS |
+| A2A | `build_a2a_app` (Starlette) | `buildA2aHandler` web-standard ou `serveA2a` de `jangada-ai/node`; TTLs em ms |
+
+Relacionado: [Começando](/docs/js/getting-started), [Providers](/docs/js/providers),
+[documentação da lib Python](/docs).

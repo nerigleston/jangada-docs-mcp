@@ -1,0 +1,213 @@
+---
+title: "Gemini Interactions e Deep Research"
+description: "GeminiInteractions no jangada-ai: Interactions API do Gemini com estado no servidor, streaming, loop de function calling e o agente Deep Research em background. Exige @google/genai 1.33 ou mais novo."
+---
+
+`GeminiInteractions` é uma camada fina e específica do Gemini sobre a
+[Interactions API](https://ai.google.dev/gemini-api/docs/interactions) do SDK
+`@google/genai`. Ela difere do `LLM` em dois pontos:
+
+- O estado fica no servidor: cada chamada devolve um `id` e a próxima continua a
+  conversa com `previousInteractionId`, sem reenviar o histórico.
+- É o caminho para os agentes gerenciados do Google, como o Deep Research, que
+  roda em background por vários minutos.
+
+A Interactions API e os agentes estão em preview: nomes de agente e campos mudam
+com frequência.
+
+```bash
+npm install jangada-ai @google/genai@latest
+```
+
+Exige `@google/genai` 1.33 ou mais novo (é a versão que traz
+`client.interactions`). Com um SDK mais antigo, a jangada lança
+`UnsupportedError` pedindo a atualização. A chave vem de `GEMINI_API_KEY` ou
+`GOOGLE_API_KEY`, ou de `apiKey` no construtor.
+
+```ts
+import { GeminiInteractions, webSearch } from "jangada-ai";
+
+const gi = new GeminiInteractions({ model: "gemini-3.8-flash" });
+const r = await gi.create("Quem venceu a Copa do Mundo de 2002?", { tools: [webSearch()] });
+console.log(r.text);
+for (const c of r.citations) console.log("-", c.title, c.url);
+
+// continua a conversa no servidor, sem reenviar histórico
+const r2 = await gi.create("E o artilheiro?", { previousInteractionId: r.id ?? undefined });
+```
+
+## Quando usar `GeminiInteractions` e quando usar `LLM`
+
+- `new LLM("gemini", ...)`: o caminho padrão. Troca de provider sem mudar código,
+  retry, fallback, cache e guardrails. As tools nativas do Gemini também
+  funcionam por lá.
+- `GeminiInteractions`: quando você quer o estado no servidor, os agentes
+  gerenciados ou tarefas longas em background com polling. Não tem retry nem
+  fallback.
+
+## API
+
+```ts
+const gi = new GeminiInteractions({
+  apiKey: process.env.GEMINI_API_KEY, // padrão: GEMINI_API_KEY ou GOOGLE_API_KEY
+  model: "gemini-3.8-flash", // padrão do create(); dispensável quando a chamada usa agent
+  vertexai: false, // true usa o Vertex AI
+  clientOptions: {}, // repassado ao construtor do GoogleGenAI
+});
+```
+
+| Método | O que faz |
+| --- | --- |
+| `create(input, options)` | Cria uma interação ou dispara um agente |
+| `stream(input, options)` | Igual ao `create`, produzindo `InteractionEvent` (async iterator) |
+| `resumeStream(id, { lastEventId })` | Retoma um stream interrompido |
+| `get(id)`, `cancel(id)`, `delete(id)` | Estado, cancelamento e remoção |
+| `wait(target, { pollIntervalMs, timeoutMs, onUpdate })` | Polling até sair de `queued`/`in_progress` |
+| `run(input, { tools, maxIterations, onToolCall, onToolResult })` | Loop de function calling com execução local |
+| `deepResearch(prompt, { agent, wait, pollIntervalMs, timeoutMs, onUpdate })` | Dispara o Deep Research em background |
+| `close()` | Fecha o cliente nativo |
+
+Opções de `create`/`stream`: `model` ou `agent` (um dos dois), `agentConfig`,
+`tools`, `system`, `previousInteractionId`, `store`, `background`,
+`responseFormat`, `toolChoice`, `maxTokens`, `seed`, `stop`, `thinkingLevel`,
+`thinkingSummaries`, `extra` (campos do corpo em snake_case) e `signal`.
+
+### `InteractionResult`
+
+- `id`, `status` (`queued`, `in_progress`, `requires_action`, `completed`,
+  `failed`, `cancelled`, `incomplete`, `budget_exceeded`), `done`,
+  `requiresAction`.
+- `text`, `steps` (como vieram da API, em snake_case), `citations`
+  (`{ type, url, title, start, end }`).
+- `functionCalls`: chamadas pendentes (`InteractionFunctionCall` com `id`, `name`,
+  `args` e `.result(output, { isError })`).
+- `usage`, `cost`, `parsed`, `model`, `agent`, `errors`, `raw`.
+- Preenchidos pelo `run`: `toolTrace`, `iterations`, `stoppedByLimit`,
+  `usageTotal`, `costTotal`, `costComplete`.
+- `raiseForStatus()`: lança `ProviderError` se terminou em `failed`, `cancelled`
+  ou `budget_exceeded`.
+
+## Tools
+
+`tools` aceita:
+
+- function tools da jangada (`tool({ name, parameters, execute })`), que viram
+  `{ type: "function" }`;
+- tools nativas canônicas: `webSearch()`, `urlContext()`, `codeExecution()`,
+  `fileSearch(...)`, `googleMaps(...)` e `nativeTool("gemini", spec)`;
+- objetos crus da API (`{ type: "google_search" }`, `{ type: "mcp_server", ... }`).
+
+Tools nativas que não existem na Interactions API (como `imageGeneration()`) ou
+`nativeTool` de outro provider lançam `UnsupportedError`. Diferente do Python,
+uma função solta não vira tool: use `tool(...)`.
+
+### Function calling com execução local (`run`)
+
+O `run` cria a interação, executa as funções que o modelo pedir e responde com
+`previousInteractionId` até a resposta final ou `maxIterations` (padrão 10). Uma
+tool que falha, que não tem `execute` ou que foi vetada (`onToolCall` devolvendo
+`false`) vira resultado com erro, e o modelo pode reagir.
+
+```ts
+import * as z from "zod";
+import { tool } from "jangada-ai";
+
+const cotacao = tool({
+  name: "cotacao",
+  description: "Cotação da moeda em reais.",
+  parameters: z.object({ moeda: z.string() }),
+  execute: ({ moeda }) => ({ USD: 5.4, EUR: 5.9 })[moeda.toUpperCase()] ?? 0,
+});
+
+const r3 = await gi.run("Quanto custam 100 dólares em reais?", { tools: [cotacao] });
+console.log(r3.text, r3.toolTrace.map((t) => t.name), r3.costTotal);
+```
+
+Para controlar o loop à mão, use `create` e responda a `functionCalls`:
+
+```ts
+let r4 = await gi.create("Quanto custam 100 dólares?", { tools: [cotacao] });
+if (r4.requiresAction) {
+  const respostas = [];
+  for (const c of r4.functionCalls) {
+    respostas.push(c.result(await cotacao.execute?.(await cotacao.parseArgs(c.args))));
+  }
+  r4 = await gi.create(respostas, { previousInteractionId: r4.id ?? undefined, tools: [cotacao] });
+}
+```
+
+## Structured output
+
+`responseFormat` aceita Zod 4.2+, Standard Schema ou `jsonSchema(...)`. O
+resultado validado fica em `parsed`; JSON fora do schema lança
+`OutputValidationError`. Um objeto JSON Schema cru vai para a API sem validação e
+sem `parsed`.
+
+```ts
+const Resumo = z.object({ titulo: z.string(), pontos: z.array(z.string()) });
+const r5 = await gi.create<z.infer<typeof Resumo>>("Resuma a história do frevo.", {
+  responseFormat: Resumo,
+});
+console.log(r5.parsed?.titulo);
+```
+
+## Streaming
+
+`stream` produz `InteractionEvent` com `type` em `created`, `status`,
+`step_start`, `text`, `thought`, `delta`, `step_stop`, `completed` (com `result`
+final) e `error` (lança `ProviderError`).
+
+```ts
+for await (const ev of gi.stream("Explique RAG em uma frase.")) {
+  if (ev.type === "text") process.stdout.write(ev.text ?? "");
+}
+```
+
+## Deep Research (background)
+
+```ts
+const rel = await gi.deepResearch("Panorama do mercado de LLMs open-source em 2026, em 5 tópicos.", {
+  onUpdate: (x) => console.log("status:", x.status),
+  timeoutMs: 30 * 60_000,
+});
+console.log(rel.text);
+```
+
+- Roda com `background: true` e `store: true` (a API exige `store` em background)
+  e faz polling a cada 10 s (`pollIntervalMs`).
+- `wait: false` devolve logo o resultado em `queued`/`in_progress`. Depois use
+  `gi.wait(r)` ou `gi.get(r.id)`.
+- `timeoutMs` estourado lança `APITimeoutError`. A interação continua rodando no
+  servidor e você pode retomar com `wait` ou `get`.
+- `signal` interrompe o polling e o `get` em andamento.
+- O agente padrão é `DEEP_RESEARCH_AGENT` (`"deep-research-preview-04-2026"`).
+  Outros agentes vão em `agent`, com `agentConfig` repassado como veio.
+- Uma tarefa leva minutos e consome de 100 mil a milhões de tokens.
+
+## Usage e custo
+
+O usage segue o contrato da lib: `inputTokens` (input mais os tokens de
+resultado de tool), `outputTokens` (inclui os thoughts), `reasoningTokens`,
+`cacheReadTokens`, `toolUseTokens`, `serverToolRequests` e `totalTokens`. O
+custo é calculado quando há `model`. Com `agent` ele fica `null`, porque não há
+tabela de preço por agente.
+
+## Limitações
+
+- `temperature` não existe na Interactions API: é aceita e ignorada. `maxTokens`,
+  `seed`, `stop` e `thinkingLevel` vão no `generation_config`.
+- Sem retry, fallback, cache ou guardrails (use o `LLM` para isso).
+- `stream` não roda o loop de tools do `run`.
+- `vertexai: true` usa o Vertex AI, mas a disponibilidade da Interactions API lá
+  depende do projeto e da região.
+
+## Diferenças em relação ao Python
+
+- Só async. O `await_` do Python é `wait` aqui.
+- Tempos em milissegundos: `pollIntervalMs` e `timeoutMs` no lugar de
+  `poll_interval` e `timeout` (segundos).
+- Toda chamada aceita `signal`.
+- Requisito do SDK: `@google/genai` 1.33+ (no Python, `google-genai` 2.3+).
+
+Relacionado: [Providers](/docs/js/providers), [Tools](/docs/js/tools),
+[Structured output](/docs/js/structured-output).

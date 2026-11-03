@@ -1,0 +1,227 @@
+---
+title: "Templates, parâmetros e profiles"
+description: "Templates {{ }} no prompt e no system, parâmetros canônicos de geração, profiles por modelo e as opções aceitas em cada chamada."
+---
+
+## Templates `{{ }}`
+
+O prompt e o `system` aceitam placeholders `{{ variavel }}`. Os valores vão em
+`variables`, na chamada:
+
+```ts
+import { LLM } from "jangada-ai";
+
+const llm = new LLM("openai", "gpt-4o-mini", {
+  system: "Você atende a {{ empresa }}. Responda em {{ idioma }}.",
+});
+
+const comp = await llm.complete("Olá, sou {{ cliente.nome }}, do pedido {{ pedido.id }}.", {
+  variables: {
+    empresa: "Padaria Pão Quente",
+    idioma: "português",
+    cliente: { nome: "Ana" },
+    pedido: { id: 4521 },
+  },
+});
+```
+
+Regras:
+
+- Acesso por ponto em objetos aninhados: `{{ cliente.nome }}`.
+- Strings e números saem como estão. Arrays e objetos saem como JSON. `Date`
+  sai em ISO 8601.
+- Strict por padrão: variável ausente lança `TemplateError` (com `key` e
+  `reason: "missing"`). Com `templateStrict: false` no `LLM`, o placeholder
+  ausente fica no texto como está.
+- Segmentos que começam com `_` (`{{ obj._segredo }}`) são recusados, e
+  propriedades herdadas de `Object`/`Array`/`Function` (`constructor`,
+  `toString`) não são lidas. Isso protege o contexto quando texto do usuário
+  entra no template.
+- Sem `variables` (ou com objeto vazio), o texto vai como está, com as chaves
+  literais. Assim um prompt que contém `{{ }}` por acaso não quebra.
+
+A classe `Template` também é exportada, para usar fora do `LLM`:
+
+```ts
+import { Template } from "jangada-ai";
+
+const t = new Template("Pedido {{ id }} de {{ cliente.nome }}");
+t.variables();                                   // ["id", "cliente.nome"]
+t.render({ id: 7, cliente: { nome: "Ana" } });   // "Pedido 7 de Ana"
+new Template("Oi {{ x }}", { strict: false }).render({}); // "Oi {{ x }}"
+```
+
+No Python as variáveis vão como kwargs (`complete(prompt, nome="Ana")`). Em JS
+elas ficam em `variables` para não colidir com as opções da chamada.
+
+## Parâmetros canônicos
+
+O `LLM` aceita nomes canônicos e cada adapter traduz para o nome nativo,
+descartando o que o provider não tem:
+
+| Canônico | OpenAI, Azure, Groq, OpenRouter, DeepSeek | Anthropic | Gemini, Vertex | Bedrock | Mistral | Ollama |
+| --- | --- | --- | --- | --- | --- | --- |
+| `temperature` | `temperature` | `temperature` | `temperature` | `temperature` | `temperature` | `temperature` |
+| `maxTokens` | `max_tokens` | `max_tokens` | `maxOutputTokens` | `maxTokens` | `maxTokens` | `num_predict` |
+| `topP` | `top_p` | `top_p` | `topP` | `topP` | `topP` | `top_p` |
+| `topK` | descartado | `top_k` | `topK` | descartado | descartado | `top_k` |
+| `stop` | `stop` | `stop_sequences` | `stopSequences` | `stopSequences` | `stop` | `stop` |
+| `seed` | `seed` | descartado | `seed` | descartado | `randomSeed` | `seed` |
+
+`maxTokens` tem padrão `8192` em todos os providers. Passe `maxTokens: null` para
+não enviar o campo (o provider usa o padrão dele).
+
+```ts
+const llm = new LLM("anthropic", "claude-sonnet-4-5", { temperature: 0.2 });
+
+// só nesta chamada
+await llm.complete("Escreva um poema.", { params: { temperature: 0.9, maxTokens: 16384 } });
+
+// cópia com outros padrões (o original não muda)
+const criativo = llm.withParams({ temperature: 1.0 });
+```
+
+### `extra`: params nativos
+
+Params sem nome canônico vão em `extra`, com o nome que o SDK do provider usa.
+Atenção à grafia: o pacote `openai` e o `@anthropic-ai/sdk` usam snake_case; o
+`@google/genai` e o `@mistralai/mistralai` usam camelCase.
+
+```ts
+new LLM("openai", "gpt-5", { extra: { reasoning_effort: "low" } });
+new LLM("anthropic", "claude-sonnet-4-5", {
+  extra: { thinking: { type: "enabled", budget_tokens: 2048 } },
+});
+new LLM("gemini", "gemini-2.5-flash", { extra: { thinkingBudget: 1024 } });
+new LLM("ollama", "llama3.2", { extra: { num_ctx: 8192, keep_alive: "10m" } });
+```
+
+`params` na chamada aceita os mesmos nomes nativos, além dos canônicos.
+
+### Remover um param herdado
+
+`withParams` ignora `undefined` e `null`. Para tirar um param de um `LLM`
+derivado, use a sentinela `REMOVE`:
+
+```ts
+import { REMOVE } from "jangada-ai";
+
+const semTemperatura = llm.withParams({ temperature: REMOVE });
+```
+
+## Profiles por modelo
+
+Modelos do mesmo provider podem ter contratos diferentes. Os profiles ajustam o
+payload por modelo, depois da tradução e logo antes da chamada:
+
+- OpenAI `gpt-5` em diante (exceto os `*-chat-*`) e série `o1`/`o3`/`o4`:
+  remove `temperature`, `top_p` e penalidades; `max_tokens` vira
+  `max_completion_tokens`.
+- Gemini 3.x em diante: remove `temperature`, `topP` e `topK`.
+  `thinkingBudget` vira `thinkingLevel` (até 1024 `LOW`, até 8192 `MEDIUM` nos
+  modelos Flash, acima disso `HIGH`).
+- Gemini 2.5: `thinkingLevel` vira `thinkingBudget` (`MINIMAL` 0, `LOW` 1024,
+  `MEDIUM` 8192, `HIGH` 24576; no `gemini-2.5-pro`, que não desliga o thinking,
+  `MINIMAL` vira 128).
+
+No Gemini, `thinkingBudget`, `thinkingLevel` e `includeThoughts` são empacotados
+no `thinkingConfig` nativo. Passe um dos dois (budget ou level) e a lib converte
+para o que o modelo aceita:
+
+```ts
+const g = new LLM("gemini", "gemini-3-flash-preview", { extra: { thinkingLevel: "LOW" } });
+await g.complete("...", { params: { thinkingBudget: 1024 } }); // vira thinkingLevel no 3.x
+```
+
+`vertex` herda as regras do `gemini`, e `azure` as do `openai`. Quando o nome do
+modelo não diz qual é o modelo base (deployment da Azure com nome livre), use
+`profileModel`:
+
+```ts
+new LLM("azure", "meu-deploy", { profileModel: "gpt-5" }); // aplica as regras do gpt-5
+```
+
+`profileModel` só serve para casar as regras; não é enviado ao SDK.
+
+Para um modelo novo com contrato diferente, registre uma regra. Ela entra na
+frente das embutidas. As chaves são as do SDK daquele provider (no exemplo, o
+`openai`, em snake_case):
+
+```ts
+import { applyProfile, registerAlias, registerProfile } from "jangada-ai";
+
+registerProfile("openai", /^meu-modelo-/, {
+  drop: ["temperature"],
+  rename: { max_tokens: "max_completion_tokens" },
+  note: "meu modelo de raciocínio",
+});
+registerAlias("meu-provider", "openai"); // provider seu herda as regras da OpenAI
+
+applyProfile("openai", "meu-modelo-1", { temperature: 0.2, max_tokens: 100 });
+// { params: { max_completion_tokens: 100 }, warnings: [...] }
+```
+
+`transform` (opcional) recebe os params e o modelo, muta os params e devolve
+avisos, para regras que não cabem em `drop`/`rename`. Os adapters aplicam o
+profile sem exibir os avisos; para vê-los, chame `applyProfile()` direto, como
+acima.
+
+## Opções do `LLM`
+
+| Opção | Padrão | O que faz |
+| --- | --- | --- |
+| `apiKey` | variável de ambiente | chave do provider |
+| `system` | | system prompt padrão (aceita `{{ }}`) |
+| `templateStrict` | `true` | variável ausente lança `TemplateError` |
+| `temperature`, `maxTokens`, `topP`, `topK`, `stop`, `seed` | `maxTokens: 8192` | params canônicos |
+| `extra` | | params nativos do provider |
+| `fallbacks` | `[]` | outros `LLM` tentados em ordem |
+| `retryOn` | `DEFAULT_FAILOVER` | erros que fazem cair para o fallback |
+| `maxRetries` | `2` | tentativas extras no mesmo candidato |
+| `backoffBaseMs`, `backoffMaxMs` | `500`, `8000` | backoff exponencial, em milissegundos |
+| `jitter` | `true` | multiplica o atraso por 0,5 a 1,5 |
+| `backoffOn` | `TRANSIENT` | erros que repetem no mesmo candidato |
+| `debug` | `false` | trace no stderr, ou uma função sua |
+| `name` | o modelo | nome no debug e na observability |
+| `profileModel` | | modelo base para os profiles |
+| `clientOptions` | | repassado ao construtor do SDK |
+| `cache` | | `ExactCache`, `SemanticCache` ou o seu |
+| `guardrails` | `[]` | guardrails de entrada e saída |
+
+Retry, backoff e fallback estão em [Erros e fallback](/docs/js/errors-fallback);
+cache em [Custo e cache](/docs/js/cost-cache).
+
+## Opções de cada chamada
+
+`complete()` e `streamComplete()` recebem um `CompleteInput`. `parse()` e
+`stream()` recebem um `CallInput`, que é o mesmo sem as três últimas linhas da
+tabela.
+
+| Opção | Tipo | O que faz |
+| --- | --- | --- |
+| `system` | `string` | system desta chamada (sobrepõe o do `LLM`) |
+| `variables` | `Record<string, unknown>` | valores dos `{{ }}` do prompt e do system |
+| `history` | `Message[]` | mensagens anteriores, inclusive resultados de tools |
+| `images` | `ImageInput[]` | `ImagePart`, data URI, URL http(s) ou `[rótulo, imagem]` |
+| `files` | `FileInput[]` | documentos (PDF, DOCX, XLSX, CSV, TXT...) |
+| `params` | `Params` | params só desta chamada (sobrepõem os do `LLM`) |
+| `signal` | `AbortSignal` | cancela a chamada, inclusive retries e fallbacks pendentes |
+| `trace` | `ObservabilitySession` | agrupa chamadas num trace de observability |
+| `tools` | `unknown[]` | function tools e tools nativas |
+| `toolChoice` | `"auto"`, `"none"`, `"required"` ou nome da tool | como o modelo usa as tools |
+| `mcpServers` | `unknown[]` | servidores MCP executados pelo provider |
+
+`CallOptions` é outro tipo: o que o `LLM` entrega ao adapter (`params` já
+mesclados, `signal`, tools normalizadas). Só interessa a quem escreve um
+provider.
+
+```ts
+const ctrl = new AbortController();
+setTimeout(() => ctrl.abort(), 10_000);
+
+await llm.complete("Resuma {{ texto }}", {
+  variables: { texto: "..." },
+  params: { maxTokens: 512 },
+  signal: ctrl.signal, // ou AbortSignal.timeout(10_000)
+});
+```

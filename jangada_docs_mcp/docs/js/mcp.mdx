@@ -1,0 +1,246 @@
+---
+title: "MCP"
+description: "Cliente e servidor Model Context Protocol no jangada-ai: MCPClient, runAgent, MCP remoto pelo provider, buildMcpHandler, serveMcp e Code Mode com QuickJS."
+---
+
+O subpath `jangada-ai/mcp` cobre os dois lados do
+[Model Context Protocol](https://modelcontextprotocol.io): consumir servidores MCP
+e expor as suas tools como servidor. No Node, `serveMcp` (stdio ou HTTP) fica em
+`jangada-ai/node`.
+
+```bash
+npm install jangada-ai @modelcontextprotocol/sdk
+npm install quickjs-emscripten   # só para o Code Mode
+```
+
+Os dois pacotes são peers opcionais. O SDK só é carregado quando você conecta ou
+monta um servidor, então `import "jangada-ai/mcp"` funciona sem ele.
+
+## Dois modelos
+
+| Modelo | Quem executa as tools | Providers |
+| --- | --- | --- |
+| Remoto: `new MCPServer({ url, name })` em `mcpServers` | O provider, no servidor dele | Anthropic, OpenAI, Azure, Groq. No Gemini a jangada abre a conexão sozinha durante a chamada. |
+| Client-side: `MCPClient` + `runAgent` ou `Agent` | A sua aplicação | Qualquer provider com tools |
+
+OpenRouter e DeepSeek recusam `mcpServers` com `UnsupportedError`. Use o modelo
+client-side neles. No Gemini, `mcpServers` também aceita um `MCPClient` já
+conectado: a jangada chama as tools localmente durante a chamada.
+
+## Remoto (o provider conecta)
+
+```ts
+import { LLM } from "jangada-ai";
+import { MCPServer } from "jangada-ai/mcp";
+
+const llm = new LLM("anthropic", "claude-sonnet-4-5");
+const comp = await llm.complete("Liste os produtos em estoque.", {
+  mcpServers: [
+    new MCPServer({
+      url: "https://seu-mcp.exemplo/mcp",
+      name: "estoque",
+      authorizationToken: process.env.MCP_TOKEN,
+      allowedTools: ["listar_produtos"],
+    }),
+  ],
+});
+```
+
+`requireApproval` (`"never"` por padrão, ou `"always"`) vale para OpenAI, Azure e
+Groq. O token fica num campo privado e não aparece em `JSON.stringify` nem em
+mensagens de erro.
+
+## Cliente MCP + agente (qualquer provider)
+
+`MCPClient` aceita uma URL (streamable HTTP; SSE se o path terminar em `/sse`) ou
+um comando stdio. O construtor não conecta: quem conecta é o `connect()`. Com
+`await using`, a conexão fecha no fim do bloco.
+
+```ts
+import { LLM } from "jangada-ai";
+import { MCPClient, runAgent } from "jangada-ai/mcp";
+
+const llm = new LLM("openai", "gpt-4o-mini");
+
+await using mcp = await new MCPClient("https://seu-mcp.exemplo/mcp", {
+  authToken: process.env.MCP_TOKEN,
+  timeout: 30_000,
+}).connect();
+
+const r = await runAgent(llm, "Quais produtos estão acabando?", {
+  client: mcp,
+  allowedTools: ["listar_produtos"],
+  onToolCall: (call) => console.log("chamando", call.name),
+});
+console.log(r?.text, r?.toolTrace, r?.costTotal);
+```
+
+stdio (só em Node, Bun e Deno):
+
+```ts
+await using fs = await new MCPClient({
+  command: "npx",
+  args: ["-y", "@modelcontextprotocol/server-filesystem", "."],
+}).connect();
+```
+
+Opções do `MCPClient`:
+
+| Opção | O que faz |
+| --- | --- |
+| `url` / `command`, `args`, `env`, `cwd` | Destino HTTP ou subprocesso stdio. |
+| `headers`, `authToken` | Headers extras. `authToken` vira `Authorization: Bearer`. |
+| `transport` | Força `"sse"` ou `"streamable-http"`. |
+| `timeout` | Timeout de cada requisição, em ms. |
+| `keepAlive` | Conecta sozinho na 1ª chamada e reconecta uma vez se a conexão cair. |
+| `retryTools` | Com `keepAlive`, repete `callTool` também em erro de leitura. Só para tools idempotentes. |
+| `roots`, `samplingLlm`, `onSamplingRequest`, `elicitationCallback`, `loggingCallback` | Capacidades de cliente: roots, sampling (com aprovação), elicitation e logs do servidor. |
+
+Para uma conexão de vida longa, fora de `await using`, chame `connect()` no
+início e `close()` no fim. Também existem `reconnect()`, `ping()` e o getter
+`connected`. Falha de conexão vira `APIConnectionError`.
+
+### Primitivos do protocolo
+
+```ts
+const tools = await mcp.listTools();
+const res = await mcp.callTool("somar", { a: 2, b: 3 }); // res.isError = a tool falhou
+const texto = await mcp.resourceText("file:///guia.md");
+const history = await mcp.promptMessages("resumir", { tema: "jangadas" });
+```
+
+Também há `listResources`, `readResource`, `listPrompts`, `getPrompt` e
+`setLoggingLevel`. As listagens seguem a paginação do servidor.
+
+### runAgent
+
+`runAgent(llm, prompt, options)` lista as tools, roda o loop e devolve a
+`Completion` final com `toolTrace`, `iterations`, `stoppedByLimit`, `usageTotal`,
+`costTotal` e `costComplete`. Devolve `null` se `maxIterations <= 0`.
+
+| Opção | O que faz |
+| --- | --- |
+| `client` | O `MCPClient` (ou qualquer objeto com `listTools`/`callTool`). Obrigatório. |
+| `maxIterations` | Padrão 10. |
+| `system`, `history`, `params`, `signal` | Repassados a cada `complete()`. |
+| `allowedTools` | Filtra as tools oferecidas e as executáveis. Uma tool fora da lista volta como erro para o modelo. |
+| `onToolCall`, `onToolResult` | Devolver `false` em `onToolCall` veta a chamada. |
+| `tools` | Tools já listadas com `mcpTools(client)`, para pular o `listTools()`. |
+
+Para usar o MCP dentro de um `Agent`, passe `mcpClient: mcp` (veja
+[Agentes](/docs/js/agents)).
+
+## Servidor MCP
+
+`buildMcpHandler(tools, options)` devolve um handler web-standard
+`(req: Request) => Promise<Response>` com Streamable HTTP. Funciona em Node, Bun,
+Deno, Cloudflare Workers, Hono e route handlers do Next.
+
+```ts
+import * as z from "zod";
+import { tool } from "jangada-ai";
+import { buildMcpHandler } from "jangada-ai/mcp";
+
+const somar = tool({
+  name: "somar",
+  description: "Soma dois números.",
+  parameters: z.object({ a: z.number(), b: z.number() }),
+  execute: ({ a, b }) => a + b,
+});
+
+const handler = buildMcpHandler([somar], {
+  name: "calc",
+  stateless: true,
+  authToken: process.env.MCP_TOKEN,
+});
+export default { fetch: handler };
+```
+
+No Node, `serveMcp` sobe o servidor por stdio (Claude Desktop, Cursor) ou HTTP. A
+função resolve quando o servidor está no ar e devolve um `close()`:
+
+```ts
+import { serveMcp } from "jangada-ai/node";
+
+const srv = await serveMcp([somar], { transport: "http", port: 3333 });
+console.log(srv.url); // http://127.0.0.1:3333/mcp
+```
+
+Opções do servidor:
+
+| Opção | O que faz |
+| --- | --- |
+| `name`, `title`, `version`, `websiteUrl`, `icons` | Dados do `serverInfo`. |
+| `stateless` | Um servidor por requisição, sem sessão. Use em serverless e com filtro por usuário. Padrão `false`. |
+| `jsonResponse` | Respostas em JSON em vez de SSE. Padrão `true`. |
+| `path` | Só atende este caminho (o `serveMcp` usa `/mcp`). |
+| `authToken` | Exige `Authorization: Bearer <token>`. |
+| `allowedHosts`, `allowedOrigins` | Proteção contra DNS rebinding. |
+| `toolFilter(ctx)` | Nomes liberados nesta requisição (`null` libera todas). |
+| `toolDescription(nome, descrição, ctx)` | Troca a descrição por requisição. |
+| `codeMode` | Liga o Code Mode (abaixo). |
+
+Sem `authToken` nem `allowedHosts`/`allowedOrigins` o endpoint fica aberto. A lib
+não faz OAuth nem CORS.
+
+### Quem chamou
+
+Dentro de uma tool servida por HTTP, `requestHeaders()` devolve os headers da
+requisição e `currentUser()` lê a identidade que o gateway do jangada Cloud manda
+(`x-jangada-user-*`, `x-jangada-claims`). Os dois usam `AsyncLocalStorage` quando
+o runtime tem. O `execute` da tool também recebe o contexto como 2º argumento,
+caminho que funciona em qualquer runtime.
+
+```ts
+import { currentUser, requestHeaders } from "jangada-ai/mcp";
+
+const quem = tool({
+  name: "quem_sou_eu",
+  description: "Mostra o usuário da chamada.",
+  execute: () => currentUser()?.email ?? requestHeaders()["x-tenant"] ?? "anônimo",
+});
+```
+
+`currentUser()` devolve `null` no stdio e fora do jangada Cloud. Num servidor
+exposto direto, qualquer cliente pode mandar esses headers.
+
+### Code Mode
+
+Com muitas tools, `codeMode: true` troca o catálogo por três meta-ferramentas:
+`search`, `get_schema` e `execute`. O `execute` roda JavaScript num sandbox
+QuickJS (WebAssembly) em que o código chama `await callTool(nome, params)`. O
+sandbox não tem `fetch`, `require`, `process`, sistema de arquivos nem timers.
+
+```ts
+import { buildMcpHandler, CodeMode } from "jangada-ai/mcp";
+
+const h1 = buildMcpHandler(tools, { codeMode: true });
+const h2 = buildMcpHandler(tools, {
+  codeMode: new CodeMode({
+    limits: { timeoutMs: 10_000, memoryBytes: 50_000_000 },
+    direct: ["cancelar_pedido"], // fica fora do sandbox, como tool comum
+  }),
+});
+```
+
+| Opção do `CodeMode` | O que faz |
+| --- | --- |
+| `limits` | `timeoutMs` (padrão 30000), `memoryBytes` (padrão 100 MB), `maxStackBytes`. |
+| `searchLimit` | Máximo de resultados do `search`. Padrão 8. |
+| `discovery: false` | Sem `search`/`get_schema`: o catálogo vai na descrição do `execute`. |
+| `direct` | Tools que ficam fora do sandbox. Assim o cliente pede aprovação humana para cada chamada delas. |
+| `executeDescription`, `executeAnnotations` | Descrição e anotações MCP do `execute`. |
+| `quickjs` | Módulo QuickJS já carregado. No Cloudflare Workers, passe um criado com `newQuickJSWASMModuleFromVariant()`. |
+
+O `toolFilter` também vale dentro do sandbox: `search`, `get_schema` e `callTool`
+só enxergam as tools liberadas na requisição.
+
+## Diferenças em relação ao Python
+
+- No Python o Code Mode roda Python no Monty. Aqui roda JavaScript no QuickJS.
+- `serve_mcp` bloqueia no Python. `serveMcp` devolve uma Promise com `close()`.
+- No lugar do app Starlette (`build_mcp_app`), o JS tem o handler
+  `Request => Response`.
+- O `async with MCPClient(...)` do Python vira `await using mcp = await new
+  MCPClient(...).connect()`.
+- Timeouts em milissegundos.

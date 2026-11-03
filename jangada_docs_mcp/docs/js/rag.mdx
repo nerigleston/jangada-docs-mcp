@@ -1,0 +1,196 @@
+---
+title: "RAG"
+description: "Embeddings, chunking, vector store (memória, pgvector e MongoDB), busca híbrida, rerank e indexação incremental no subpath jangada-ai/rag."
+---
+
+O subpath `jangada-ai/rag` junta embeddings (`LLM.embed`), chunking, vector store
+e busca híbrida (vetorial + texto, fundidas por RRF) num pipeline só. O esquema
+de banco é o mesmo da lib Python: os dois podem ler e escrever a mesma tabela ou
+coleção.
+
+```bash
+npm install jangada-ai openai   # embeddings e chat
+npm install pg                  # se usar Postgres + pgvector
+npm install mongodb             # se usar MongoDB
+```
+
+`pg` e `mongodb` são peers opcionais, carregados só quando o store conecta. O
+store em memória não precisa de nada.
+
+## Embeddings
+
+```ts
+import { LLM } from "jangada-ai";
+
+const emb = new LLM("openai", "text-embedding-3-small"); // ou ("gemini", "gemini-embedding-001")
+const v = await emb.embed("uma frase"); // number[]
+const vs = await emb.embed(["a", "b"], { task: "document" }); // number[][], com vs.usage
+```
+
+- `task`: `"document"` ao indexar, `"query"` ao buscar. O Gemini usa; os outros
+  ignoram.
+- `batchSize`: textos por requisição (Gemini: 1 a 100).
+- Extras do provider (`dimensions`, `outputDimensionality`) vão na mesma opção.
+- Suportado em OpenAI, Azure, OpenRouter, Gemini, Vertex, Mistral e Ollama. Os
+  outros lançam `UnsupportedError`.
+- Erro transitório repete com backoff, mas não há fallback para outro modelo:
+  vetores de modelos diferentes não são comparáveis.
+
+## Pipeline completo
+
+```ts
+import { LLM } from "jangada-ai";
+import { readDocument } from "jangada-ai/node";
+import { RAG, vectorStore } from "jangada-ai/rag";
+
+const emb = new LLM("openai", "text-embedding-3-small");
+const chat = new LLM("openai", "gpt-4o-mini");
+
+const store = vectorStore(process.env.DATABASE_URL); // postgresql://, mongodb:// ou "memory"
+const rag = new RAG(emb, store, { chat, k: 5 });
+
+await rag.addDocument(await readDocument("manual.pdf"), { metadata: { fonte: "manual" } });
+await rag.addTexts(["A padaria abre às 6h.", "Aceitamos PIX."], { documentId: "faq" });
+
+const resposta = await rag.ask("Como faço backup?");
+console.log(resposta.text);
+for (const s of resposta.sources) console.log(s.score, s.chunk.content.slice(0, 80));
+```
+
+`ask()` devolve `{ text, sources, completion }`. O prompt manda o modelo usar só
+o contexto, citar os trechos (`[1]`, `[2]`) e tratar o contexto como dado, sem
+seguir instruções que apareçam nele. Troque com `prompt` (use `{context}` e
+`{question}`) ou acrescente `system`.
+
+`readDocument` lê do disco e só existe em `jangada-ai/node`. Em edge, crie o
+`Document` a partir dos bytes. PDF, DOCX e XLSX precisam dos peers `unpdf`,
+`mammoth` e `exceljs`.
+
+## Vector store pela string de conexão
+
+`vectorStore(url, opções)` escolhe o adapter pelo esquema:
+
+| URL | Store | Busca |
+| --- | --- | --- |
+| `postgresql://` ou `postgres://` | `PgVectorStore` (precisa de `pg`) | cosseno (`<=>`) + full-text (`tsvector`) |
+| `mongodb://` ou `mongodb+srv://` | `MongoVectorStore` (precisa de `mongodb`) | Atlas `$vectorSearch` + `$text`; sem Atlas, cosseno no cliente |
+| `"memory"` ou vazio | `InMemoryVectorStore` | cosseno + BM25 |
+
+Outro esquema lança `Error`. A tabela, a coleção e os índices são criados no
+primeiro uso.
+
+### Postgres (pgvector)
+
+```ts
+import { Pool } from "pg";
+import { PgVectorStore, vectorStore } from "jangada-ai/rag";
+
+const store = vectorStore("postgresql://user:senha@host:5432/db", { textConfig: "portuguese" });
+
+// ou com um pool seu (o close() do store não encerra o seu pool)
+await using pg = new PgVectorStore(process.env.DATABASE_URL ?? "", {
+  pool: new Pool({ connectionString: process.env.DATABASE_URL }),
+  table: "rag.jangada_chunks",
+});
+```
+
+- `table`: padrão `jangada_chunks`; aceita `schema.tabela`.
+- `textConfig`: regconfig do full-text. O padrão `'simple'` não faz stemming;
+  para português use `"portuguese"`. É fixado na criação da tabela.
+- Até 2000 dimensões o índice HNSW é sobre `vector`. De 2001 a 4000 usa `halfvec`
+  (pgvector 0.7 ou mais novo). Acima disso a busca é exata, sem índice, com aviso.
+- `close()` (ou `await using`) encerra o pool criado pelo store.
+
+### MongoDB
+
+```ts
+const store = vectorStore("mongodb+srv://user:senha@cluster/meubanco", {
+  collection: "jangada_chunks",
+  vectorIndex: "vector_index",
+  filterFields: ["fonte"], // campos usados em filter na busca vetorial
+});
+```
+
+O banco vem do caminho da URI (padrão `jangada`). O `$vectorSearch` só filtra por
+campos declarados no índice: liste-os em `filterFields` antes do primeiro
+`setup`. Também aceita `client` (um `MongoClient` seu).
+
+## Busca
+
+```ts
+const res = await rag.search("prazo de entrega", {
+  k: 8,
+  mode: "hybrid", // "vector" | "text" | "hybrid"
+  filter: { fonte: "manual" }, // igualdade nos campos de metadata
+  minScore: 0.2,
+});
+```
+
+Opções do construtor do `RAG`:
+
+| Opção | Padrão | O que faz |
+| --- | --- | --- |
+| `chat` | o embedder | LLM que responde no `ask()` |
+| `k` | 5 | trechos no contexto |
+| `chunkSize`, `overlap` | 1000, 200 | chunking por caracteres |
+| `chunker` | | chunker próprio, ex.: `semanticChunker(emb)` |
+| `minScore` | | descarta resultados abaixo |
+| `maxContextChars` | | orçamento de caracteres do contexto |
+| `weights` / `alpha` | `[1, 1]` | peso vetorial e textual no híbrido; `alpha` 0 = só texto, 1 = só vetor |
+| `rrfK` | 60 | constante do RRF |
+| `reranker` | | reranker padrão das buscas |
+| `fetchK` | `max(k*4, 20)` | candidatos buscados antes de reordenar |
+
+### Rerank e estratégias
+
+```ts
+import { RAG, Reranker, semanticChunker } from "jangada-ai/rag";
+
+const rag2 = new RAG(emb, store, {
+  chat,
+  reranker: Reranker.cohere(), // COHERE_API_KEY; também Reranker.voyage() e Reranker.fn(scorer)
+  chunker: semanticChunker(emb, { threshold: 0.6 }),
+});
+
+await rag2.search("como cancelar", { strategy: "multi_query", nQueries: 3 });
+await rag2.search("como cancelar", { compress: true, rerank: false });
+```
+
+- `strategy: "multi_query"`: o `chat` gera variações da pergunta e os rankings
+  são fundidos por RRF.
+- `strategy: "parent_document"`: indexe com `parentChunkSize` em `addTexts`; a
+  busca acha o trecho pequeno e devolve o pai.
+- `compress: true`: o `chat` corta de cada trecho o que não responde à pergunta.
+- `rerank: false` desliga o reranker do RAG nesta busca.
+
+## Indexação incremental
+
+`syncTexts` e `syncDocument` reindexam um documento comparando o hash SHA-1 de
+cada chunk: só os novos são embedados e os que sumiram são apagados.
+
+```ts
+const r = await rag.syncTexts(["texto da versão nova"], { documentId: "faq" });
+// { added: 3, removed: 1, unchanged: 42 }
+```
+
+Funciona no Postgres e no store em memória. O `MongoVectorStore` ainda não
+suporta indexação incremental e lança `Error`; use `addTexts`.
+
+No Postgres a sincronização roda numa transação com
+`pg_advisory_xact_lock(hashtextextended(document_id, 0))`, a mesma chave da lib
+Python. Um processo Python e um Node sincronizando o mesmo documento se
+serializam. Os embeddings são gerados antes de abrir a transação.
+
+## Compatibilidade com a lib Python
+
+- Postgres: mesma tabela, colunas (`document_id`, `idx`, `content`, `embedding`,
+  `metadata`, `hash`, `tsv`), índices e advisory lock.
+- MongoDB: mesma coleção, campos e índices.
+- O hash dos chunks é o mesmo SHA-1 do conteúdo, então um documento indexado por
+  uma lib aparece como `unchanged` na outra.
+- Use o mesmo modelo de embedding nas duas: vetores de modelos diferentes não se
+  comparam.
+
+Utilitários exportados para quem monta o próprio pipeline: `chunkText`,
+`loadText`, `rrfFuse`, `expandQueries`, `compressResults`, `toParents`,
+`contentHash`, `cosine` e a classe base `VectorStore`.

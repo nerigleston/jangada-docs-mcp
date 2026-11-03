@@ -1,0 +1,29 @@
+{
+  "title": "JavaScript / TypeScript",
+  "description": "npm package jangada-ai",
+  "root": true,
+  "pages": [
+    "index",
+    "---Getting started---",
+    "getting-started",
+    "providers",
+    "parameters",
+    "differences",
+    "---Capabilities---",
+    "structured-output",
+    "tools",
+    "streaming",
+    "vision-documents",
+    "agents",
+    "mcp",
+    "rag",
+    "interactions",
+    "a2a",
+    "guardrails",
+    "observability",
+    "eval",
+    "---Reliability---",
+    "errors-fallback",
+    "cost-cache"
+  ]
+}

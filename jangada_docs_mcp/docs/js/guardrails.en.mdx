@@ -1,0 +1,150 @@
+---
+title: "Guardrails"
+description: "ScopeGuard and custom guardrails in jangada-ai: keep the LLM inside a domain and block messages on input and output, with a refusal or a GuardrailError."
+---
+
+Guardrails keep the LLM inside a domain and block unwanted messages. The `LLM`
+calls the guards at two points:
+
+- input: before calling the main model;
+- output: after the response.
+
+When a guard blocks, the call returns a refusal `Completion` with the `message`
+text. With `raiseOnBlock: true`, it throws `GuardrailError`.
+
+## ScopeGuard
+
+Combines two mechanisms:
+
+1. blocklist (regex or terms): blocks immediately, without calling an LLM;
+2. scope classifier: a cheap `judge` decides, with structured output, whether the
+   text belongs to the described scope.
+
+```ts
+import { LLM, ScopeGuard } from "jangada-ai";
+
+const guard = new ScopeGuard(
+  "Support for the e-Gestor system: invoices, finance, records. " +
+    "Does not answer about other subjects (recipes, politics, code).",
+  {
+    judge: new LLM("groq", "llama-3.1-8b-instant"), // cheap model just for classification
+    block: [/\bpassword\b/i, "ignore the instructions"], // blocks without calling an LLM
+    message: "Sorry, I can only help with e-Gestor topics.",
+    check: "both", // "input" (default), "output" or "both"
+  },
+);
+
+const llm = new LLM("openai", "gpt-4o", { guardrails: [guard] });
+
+await llm.complete("How do I issue an invoice?"); // in scope: normal answer
+const r = await llm.complete("Teach me how to bake a cake"); // out of scope: refusal
+console.log(r.text, r.raw); // "Sorry, I can only..." { guardrail: "fora do escopo" }
+```
+
+The 1st argument is the scope as text. String terms become case-insensitive
+regexes.
+
+### Options
+
+| Option | Purpose |
+| --- | --- |
+| `judge` | `LLM` that classifies the scope. Without it, the main model is used. |
+| `block` | List of `string` or `RegExp` that block without calling an LLM. |
+| `message` | Refusal text. |
+| `check` | `"input"` (default), `"output"` or `"both"`. |
+| `instruction` | Replaces the classifier instruction. |
+| `raiseOnBlock` | `true` throws `GuardrailError` instead of returning the refusal. |
+| `failClosed` | If the judge fails: `true` blocks, `false` (default) lets it through. |
+| `checkHistory` | `false` (default) checks only what came after the assistant's last message; `true` checks the whole history. |
+
+Tool results (role `tool` messages) only go through the blocklist: they are
+external content and may carry prompt injection.
+
+## Refusal or error
+
+The refusal is a regular `Completion`: `text` is the `message` and `raw` is
+`{ guardrail: "<reason>" }`. The reason strings come from the lib in Portuguese
+(`"fora do escopo"`, `"termo bloqueado: ..."`). When the input is blocked the main
+model is not called and `cost` is `null`. When the output is blocked the
+generation was already paid for, so the refusal keeps the call's `usage` and
+`cost`.
+
+With `raiseOnBlock: true`:
+
+```ts
+import { GuardrailError, LLM, ScopeGuard } from "jangada-ai";
+
+const strict = new LLM("openai", "gpt-4o-mini", {
+  guardrails: [new ScopeGuard("Customer service for a pizza place.", { raiseOnBlock: true })],
+});
+
+try {
+  await strict.complete("What is the dollar exchange rate?");
+} catch (e) {
+  if (e instanceof GuardrailError) console.log("blocked:", e.message);
+}
+```
+
+`GuardrailError` is outside the failover: it is policy, not a provider failure.
+
+## Where it applies
+
+| Method | Input | Output |
+| --- | --- | --- |
+| `complete`, `parse` | yes | yes |
+| `streamComplete` | yes | no |
+| `stream` | yes | no |
+
+In streaming, an output guard would have to wait for the whole text. If the input
+is blocked, `stream` emits only the refusal message and `streamComplete` emits the
+refusal text and a `done` event with it.
+
+The judge's own call does not go through the guardrails and does not create an
+observability trace, even when the judge is the main model.
+
+## Custom guardrail
+
+Extend `Guardrail` and override `checkInput` and/or `checkOutput`. Both are async
+and return `{ ok, reason }`. The 2nd argument is the `LLM` that made the call, in
+case you want to use it as a judge.
+
+```ts
+import { type Completion, Guardrail, type GuardResult, LLM, type Message } from "jangada-ai";
+
+class MaxLength extends Guardrail {
+  constructor(private readonly limit: number) {
+    super();
+    this.message = "Message too long.";
+  }
+
+  override async checkInput(messages: Message[]): Promise<GuardResult> {
+    const text = messages
+      .filter((m) => m.role === "user" && typeof m.content === "string")
+      .map((m) => m.content as string)
+      .join(" ");
+    return text.length <= this.limit ? { ok: true, reason: "" } : { ok: false, reason: "over the limit" };
+  }
+
+  override async checkOutput(comp: Completion): Promise<GuardResult> {
+    return /\d{3}-\d{2}-\d{4}/.test(comp.text)
+      ? { ok: false, reason: "SSN in the response" }
+      : { ok: true, reason: "" };
+  }
+}
+
+const llm = new LLM("openai", "gpt-4o-mini", { guardrails: [new MaxLength(2000)] });
+```
+
+Guards run in list order; the first one that blocks decides.
+
+## Recommendations
+
+- Use a separate, cheap `judge` (`gpt-4.1-nano`, `gemini-2.5-flash-lite`,
+  `llama-3.1-8b-instant`): classification runs on every call.
+- Put the obvious terms in the blocklist, which costs nothing, and leave the
+  topic decision to the judge.
+- `failClosed: true` is the safer choice when answering off-scope is costly; the
+  default favors availability.
+
+Related: [Errors, retry and fallback](/en/docs/js/errors-fallback),
+[Agents](/en/docs/js/agents).

@@ -1,0 +1,201 @@
+---
+title: "Custo, cache e debug"
+description: "Usage e custo em cada resposta do jangada-ai, tabela de preços dinâmica, cache exato e semântico de respostas e trace passo a passo com debug."
+---
+
+## Custo e usage
+
+Toda `Completion` bem-sucedida traz `usage` (tokens) e `cost` (USD estimado).
+
+```ts
+import { LLM } from "jangada-ai";
+
+const llm = new LLM("openai", "gpt-4o-mini");
+const comp = await llm.complete("Resuma: ...");
+console.log(comp.usage); // { inputTokens: 812, outputTokens: 64, ... }
+console.log(comp.cost); // ex.: 0.000160
+```
+
+`cost` é `null` quando não há como estimar (modelo fora da tabela ou usage sem
+tokens). A lib não inventa preço.
+
+### Contrato de usage
+
+Todos os adapters devolvem as mesmas chaves, em camelCase:
+
+| Chave | Significado |
+| --- | --- |
+| `inputTokens` | total de input, já incluindo tokens de cache |
+| `outputTokens` | total de output (no Gemini inclui o thinking) |
+| `cacheReadTokens` | parte do input lida do cache do provider |
+| `cacheWriteTokens` | parte do input gravada no cache do provider |
+| `reasoningTokens` | parte do output gasta raciocinando (só informativo) |
+| `serverToolRequests` | chamadas de tools nativas, ex.: `{ web_search: 2 }` |
+| `audioSeconds` | duração do áudio na transcrição |
+
+O cálculo cobra o input fora do cache a preço cheio, leitura e escrita de cache
+pelo preço de cache do modelo, o output uma vez só (reasoning não é cobrado em
+dobro) e soma a taxa por chamada das tools nativas. Transcrição é cobrada por
+minuto, quando `audioSeconds` existe.
+
+`FlowResult`, `GraphResult`, `AgentResult` e `SquadResult` somam `usage` e `cost`
+da cadeia. O campo `costComplete` fica `false` quando algum passo teve custo
+desconhecido (o total é parcial).
+
+### Tabela de preços
+
+A tabela embutida no pacote é a mesma da lib Python e serve de fallback offline.
+Os preços do dia vêm do catálogo publicado em `https://jangada.dev.br/prices.json`:
+
+- Automático: no primeiro cálculo de custo a lib busca o catálogo em background,
+  no máximo uma vez por processo. A chamada não espera. Desligue com
+  `JANGADA_NO_PRICE_REFRESH=1`.
+- Manual: `await refreshPrices()` no boot do app. Aceita `url`, `ttl` (ms, padrão
+  1 dia), `timeout` (ms), `force` e um `fetch` alternativo. Nunca lança; devolve
+  `true` se aplicou preços.
+
+A URL também pode vir da env `JANGADA_PRICES_URL`. O cache do catálogo fica em
+memória (o núcleo não usa disco).
+
+```ts
+import {
+  computeCost,
+  priceFor,
+  refreshPrices,
+  registerAudioPrice,
+  registerPrice,
+  registerToolFee,
+} from "jangada-ai";
+
+await refreshPrices({ force: true });
+
+// USD por 1M de tokens (input, output); tem prioridade sobre o catálogo
+registerPrice("meu-modelo", 1.0, 4.0, { cacheRead: 0.1, above200k: [2.0, 8.0] });
+registerToolFee("web_search", 12.0, { provider: "meu-provider" }); // USD por 1000 chamadas
+registerAudioPrice("whisper-1", 0.006); // USD por minuto
+
+console.log(priceFor("gpt-4o-mini")); // [input, output] ou null
+
+const custo = computeCost(
+  "claude-sonnet-4-5",
+  { inputTokens: 10_000, cacheReadTokens: 8_000, outputTokens: 500, serverToolRequests: { web_search: 1 } },
+  { provider: "anthropic" },
+);
+```
+
+Os padrões aceitam string (regex) ou `RegExp`. Outras funções: `toolFeeFor`,
+`audioPriceFor`, `loadPrices(catalogo)` e `exportPrices()`.
+
+Os valores são aproximados. Servem para estimativa e observabilidade, não para
+faturamento.
+
+### Imagens e detecção
+
+Imagem não tem preço separado: os providers contam os tokens dela em
+`inputTokens`. `detectObjects` devolve só as caixas; `detectObjectsFull` devolve
+também `completion`, `cost` e `usage`.
+
+## Cache de respostas
+
+Passe um cache no `LLM`. O cliente consulta o cache antes de chamar o provider e
+grava depois de uma resposta bem-sucedida. Um acerto devolve uma cópia com
+`cost = 0` e `cached = true`.
+
+### `ExactCache`
+
+Acerta só com requisição idêntica: mesmo método, provider, modelo, params,
+schema do `parse` e mensagens. LRU em memória, sem custo de embedding.
+
+```ts
+import { ExactCache, LLM } from "jangada-ai";
+
+const llm = new LLM("openai", "gpt-4o-mini", {
+  cache: new ExactCache({ maxSize: 512, ttlMs: 3_600_000 }),
+});
+await llm.complete("Resuma a teoria da relatividade."); // chama o provider
+const r = await llm.complete("Resuma a teoria da relatividade."); // vem do cache
+console.log(r.cached, r.cost); // true 0
+```
+
+### `SemanticCache`
+
+Acerta quando a última fala do usuário é parecida com uma anterior (cosseno maior
+ou igual a `threshold`) no mesmo escopo e contexto. System, histórico e imagens
+da última fala entram no contexto: "sim" em duas conversas diferentes não dá
+acerto.
+
+```ts
+import { LLM, SemanticCache } from "jangada-ai";
+
+const embedder = new LLM("openai", "text-embedding-3-small");
+const llm = new LLM("openai", "gpt-4o-mini", {
+  cache: new SemanticCache(embedder, { threshold: 0.6, ttlMs: 86_400_000, maxSize: 5000 }),
+});
+await llm.complete("Qual a capital da França?");
+await llm.complete("Me diga a capital francesa."); // paráfrase: acerto
+```
+
+O padrão de `threshold` é `0.85`. Calibre pelo modelo de embedding: paráfrases
+ficam perto de 0.6 no `text-embedding-3-small` e de 0.9 no `gemini-embedding-001`.
+Alto demais e o cache nunca acerta; baixo demais e devolve resposta de outra
+pergunta.
+
+### O que não entra no cache
+
+- Chamadas com `tools` ou `mcpServers`.
+- `stream` e `streamComplete`.
+- Respostas de fallback (só o candidato primário grava).
+- Recusas de guardrail.
+
+Falha no `get` ou no `set` (ex.: o embedder tomou rate limit) vira miss e não
+derruba a chamada.
+
+### Cache próprio
+
+Os dois caches ficam na memória do processo. Para Redis, KV ou outro armazenamento,
+implemente a interface `Cache`:
+
+```ts
+import { type Cache, type CacheScope, Completion, hitCopy, type Message } from "jangada-ai";
+
+class MeuCache implements Cache {
+  private dados = new Map<string, Completion>();
+  async get(method: string, messages: Message[], scope: CacheScope) {
+    const c = this.dados.get(JSON.stringify([method, scope, messages]));
+    return c ? hitCopy(c) : null; // hitCopy marca cached = true e cost = 0
+  }
+  async set(method: string, messages: Message[], scope: CacheScope, comp: Completion) {
+    this.dados.set(JSON.stringify([method, scope, messages]), comp);
+  }
+}
+```
+
+## Debug
+
+`debug: true` imprime no stderr o trace de cada chamada: provider e modelo,
+mensagens, params, retries, fallback, tokens, custo e duração. `name` rotula o
+`LLM` no trace, útil com vários agentes.
+
+```ts
+const llm = new LLM("openai", "gpt-4o-mini", { debug: true, name: "extrator" });
+await llm.complete("Extraia o CNPJ: ...");
+```
+
+```
+┌─ [extrator] openai/gpt-4o-mini
+│  user: Extraia o CNPJ: ...
+│  params: maxTokens=8192
+│  ← 840ms · ↑35 ↓18 tok · $0.000016: 12.345.678/0001-90
+└─
+```
+
+Para mandar as linhas a outro lugar (logger, arquivo), passe uma função no lugar
+de `true`:
+
+```ts
+const linhas: string[] = [];
+const comLog = new LLM("openai", "gpt-4o-mini", { debug: (linha) => linhas.push(linha) });
+```
+
+Relacionado: [Erros, retry e fallback](/docs/js/errors-fallback),
+[Observability](/docs/js/observability).

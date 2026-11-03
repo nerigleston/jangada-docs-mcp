@@ -5,7 +5,9 @@ acesso a TODA a documentação da lib `jangada` — para ele escrever código co
 com a API atual (sem chutar nomes de função/assinaturas).
 
 É o próprio jangada **sendo um servidor MCP** (`serve_mcp`, protocolo stdio).
-Self-contained: a doc vive em `./docs` (cópia do site, `.mdx` PT/EN).
+Self-contained: a doc vive em `./docs` (cópia do site, `.mdx` PT/EN). A lib
+Python fica na raiz; o pacote npm (JavaScript/TypeScript) em `./docs/js`, com
+nomes de página prefixados por `js/` (ex.: 'js/tools').
 
 Ferramentas expostas:
   - jangada_indice()            -> índice/ordem das páginas (meta.json)
@@ -40,23 +42,43 @@ def _frontmatter_title(md: str, fallback: str) -> str:
 
 
 def _pt_pages() -> list[Path]:
-    # páginas PT = *.mdx exceto *.en.mdx
-    return sorted(p for p in DOCS.glob("*.mdx") if not p.name.endswith(".en.mdx"))
+    # páginas PT = *.mdx exceto *.en.mdx (raiz = Python, js/ = pacote npm)
+    return sorted(p for p in DOCS.rglob("*.mdx") if not p.name.endswith(".en.mdx"))
 
 
-def jangada_indice() -> str:
-    """Índice da documentação do jangada: as páginas na ordem das seções
-    (Começando, Providers, Capacidades, Confiabilidade, etc.). Comece por aqui."""
-    meta = DOCS / "meta.json"
-    if not meta.exists():
-        return jangada_listar_docs()
+def _nome(p: Path) -> str:
+    """Nome da página como os tools aceitam: 'rag' ou 'js/rag'."""
+    return p.relative_to(DOCS).with_suffix("").as_posix()
+
+
+_LINK = re.compile(r"^\[(.+?)\]\((.+?)\)$")
+
+
+def _indice_de(meta: Path, prefixo: str) -> list[str]:
     pages = json.loads(meta.read_text(encoding="utf-8", errors="ignore")).get("pages", [])
     linhas = []
     for p in pages:
         if p.startswith("---") and p.endswith("---"):
             linhas.append(f"\n### {p.strip('- ')}")
+        elif _LINK.match(p) or (not prefixo and p == "js"):
+            continue  # seção JS no menu do site: listada à parte, abaixo
         else:
-            linhas.append(f"- {p}")
+            linhas.append(f"- {prefixo}{p}")
+    return linhas
+
+
+def jangada_indice() -> str:
+    """Índice da documentação do jangada: as páginas na ordem das seções
+    (Começando, Providers, Capacidades, Confiabilidade, etc.). Primeiro a lib
+    Python (PyPI); depois o pacote JavaScript/TypeScript (npm), com páginas
+    'js/...'. Comece por aqui."""
+    meta = DOCS / "meta.json"
+    if not meta.exists():
+        return jangada_listar_docs()
+    linhas = ["## Python (PyPI: jangada-ai)", *_indice_de(meta, "")]
+    meta_js = DOCS / "js" / "meta.json"
+    if meta_js.exists():
+        linhas += ["", "## JavaScript / TypeScript (npm: jangada-ai)", *_indice_de(meta_js, "js/")]
     return "\n".join(linhas)
 
 
@@ -68,21 +90,22 @@ def jangada_listar_docs() -> str:
             titulo = _frontmatter_title(f.read_text(encoding="utf-8", errors="ignore"), f.stem)
         except OSError:
             titulo = f.stem
-        linhas.append(f"- {f.stem} — {titulo}")
+        linhas.append(f"- {_nome(f)} — {titulo}")
     return "\n".join(linhas) or "nenhuma página encontrada"
 
 
 def jangada_ler_doc(nome: str = "", lang: str = "pt", slug: str = "") -> str:
     """Conteúdo completo de uma página. `nome` (alias: `slug`) = arquivo (com ou
-    sem .mdx), ex.: 'rag', 'mcp', 'eval', 'agents', 'structured-output'. `lang`:
-    'pt' (padrão) ou 'en'. Veja os nomes em jangada_listar_docs()."""
-    nome = (nome or slug).strip().removesuffix(".mdx").removesuffix(".en")
-    if not nome:
-        disponiveis = ", ".join(p.stem for p in _pt_pages())
+    sem .mdx), ex.: 'rag', 'mcp', 'eval', 'agents', 'structured-output'; para o
+    pacote JavaScript/TypeScript use o prefixo 'js/' (ex.: 'js/tools', 'js/rag').
+    `lang`: 'pt' (padrão) ou 'en'. Veja os nomes em jangada_listar_docs()."""
+    nome = (nome or slug).strip().strip("/").removesuffix(".mdx").removesuffix(".en")
+    if not nome or ".." in nome.split("/"):
+        disponiveis = ", ".join(_nome(p) for p in _pt_pages())
         return f"informe 'nome' (ex.: 'rag'). Disponíveis: {disponiveis}"
     arquivo = DOCS / (f"{nome}.en.mdx" if lang == "en" else f"{nome}.mdx")
     if not arquivo.exists():
-        disponiveis = ", ".join(p.stem for p in _pt_pages())
+        disponiveis = ", ".join(_nome(p) for p in _pt_pages())
         return f"página '{nome}' ({lang}) não existe. Disponíveis: {disponiveis}"
     return arquivo.read_text(encoding="utf-8", errors="ignore")
 
@@ -107,7 +130,7 @@ def jangada_buscar(termo: str = "", max_resultados: int = 30, query: str = "") -
             continue
         hits = [ln.strip() for ln in texto.splitlines() if any(t in ln.lower() for t in tokens)]
         if hits:
-            saida.append(f"## {f.stem}")
+            saida.append(f"## {_nome(f)}")
             for h in hits[:8]:
                 saida.append(f"  {h}")
                 achados += 1

@@ -1,0 +1,148 @@
+---
+title: "Guardrails"
+description: "ScopeGuard e guardrails próprios no jangada-ai: mantêm a LLM num domínio e barram falas na entrada e na saída, com recusa ou GuardrailError."
+---
+
+Guardrails mantêm a LLM dentro de um domínio e barram falas indesejadas. O `LLM`
+chama os guards em dois pontos:
+
+- entrada: antes de chamar o modelo principal;
+- saída: depois da resposta.
+
+Quando um guard barra, a chamada devolve uma `Completion` de recusa com o texto
+de `message`. Com `raiseOnBlock: true`, lança `GuardrailError`.
+
+## ScopeGuard
+
+Combina dois mecanismos:
+
+1. blocklist (regex ou termos): barra na hora, sem chamar LLM;
+2. classificador de escopo: um `judge` barato decide, com structured output, se o
+   texto pertence ao escopo descrito.
+
+```ts
+import { LLM, ScopeGuard } from "jangada-ai";
+
+const guard = new ScopeGuard(
+  "Suporte do sistema e-Gestor: notas fiscais, financeiro, cadastros. " +
+    "Não responde sobre outros assuntos (receitas, política, código).",
+  {
+    judge: new LLM("groq", "llama-3.1-8b-instant"), // modelo barato só para classificar
+    block: [/\bsenha\b/i, "ignore as instruções"], // barra sem chamar LLM
+    message: "Desculpe, só posso ajudar com assuntos do e-Gestor.",
+    check: "both", // "input" (padrão), "output" ou "both"
+  },
+);
+
+const llm = new LLM("openai", "gpt-4o", { guardrails: [guard] });
+
+await llm.complete("Como emito uma NF-e?"); // dentro do escopo: resposta normal
+const r = await llm.complete("Me ensina a fazer um bolo"); // fora: recusa
+console.log(r.text, r.raw); // "Desculpe, só posso..." { guardrail: "fora do escopo" }
+```
+
+O 1º argumento é o escopo em texto. Termos em string viram regex sem diferenciar
+maiúsculas.
+
+### Opções
+
+| Opção | Função |
+| --- | --- |
+| `judge` | `LLM` que classifica o escopo. Sem ele, usa o modelo principal. |
+| `block` | Lista de `string` ou `RegExp` que barram sem chamar LLM. |
+| `message` | Texto da recusa. |
+| `check` | `"input"` (padrão), `"output"` ou `"both"`. |
+| `instruction` | Substitui a instrução do classificador. |
+| `raiseOnBlock` | `true` lança `GuardrailError` em vez de devolver a recusa. |
+| `failClosed` | Se o judge falhar: `true` barra, `false` (padrão) libera. |
+| `checkHistory` | `false` (padrão) checa só o que chegou depois da última fala do assistant; `true` checa o histórico inteiro. |
+
+Resultados de tool (mensagens role `tool`) passam só pela blocklist: são conteúdo
+externo e podem trazer injeção de prompt.
+
+## Recusa ou erro
+
+A recusa é uma `Completion` comum: `text` é a `message` e `raw` é
+`{ guardrail: "<motivo>" }`. Na entrada barrada o modelo principal não é chamado
+e `cost` fica `null`. Na saída barrada a geração já foi paga, então a recusa
+herda `usage` e `cost` da chamada.
+
+Com `raiseOnBlock: true`:
+
+```ts
+import { GuardrailError, LLM, ScopeGuard } from "jangada-ai";
+
+const estrito = new LLM("openai", "gpt-4o-mini", {
+  guardrails: [new ScopeGuard("Atendimento de uma pizzaria.", { raiseOnBlock: true })],
+});
+
+try {
+  await estrito.complete("Qual a cotação do dólar?");
+} catch (e) {
+  if (e instanceof GuardrailError) console.log("barrado:", e.message);
+}
+```
+
+`GuardrailError` fica fora do failover: é política, não falha de provider.
+
+## Onde se aplica
+
+| Método | Entrada | Saída |
+| --- | --- | --- |
+| `complete`, `parse` | sim | sim |
+| `streamComplete` | sim | não |
+| `stream` | sim | não |
+
+No streaming o guard de saída exigiria esperar o texto inteiro. Se a entrada for
+barrada, o `stream` emite só a mensagem de recusa e o `streamComplete` emite o
+texto da recusa e um evento `done` com ela.
+
+A chamada que o judge faz não passa pelos guardrails nem gera trace na
+observability, mesmo quando o judge é o próprio modelo principal.
+
+## Guardrail próprio
+
+Estenda `Guardrail` e sobrescreva `checkInput` e/ou `checkOutput`. Os dois são
+async e devolvem `{ ok, reason }`. O 2º argumento é o `LLM` que fez a chamada,
+caso você queira usá-lo como judge.
+
+```ts
+import { type Completion, Guardrail, type GuardResult, LLM, type Message } from "jangada-ai";
+
+class TamanhoMaximo extends Guardrail {
+  constructor(private readonly limite: number) {
+    super();
+    this.message = "Mensagem longa demais.";
+  }
+
+  override async checkInput(messages: Message[]): Promise<GuardResult> {
+    const texto = messages
+      .filter((m) => m.role === "user" && typeof m.content === "string")
+      .map((m) => m.content as string)
+      .join(" ");
+    return texto.length <= this.limite ? { ok: true, reason: "" } : { ok: false, reason: "excedeu o limite" };
+  }
+
+  override async checkOutput(comp: Completion): Promise<GuardResult> {
+    return /\d{3}\.\d{3}\.\d{3}-\d{2}/.test(comp.text)
+      ? { ok: false, reason: "CPF na resposta" }
+      : { ok: true, reason: "" };
+  }
+}
+
+const llm = new LLM("openai", "gpt-4o-mini", { guardrails: [new TamanhoMaximo(2000)] });
+```
+
+Os guards rodam na ordem da lista; o primeiro que barrar decide.
+
+## Recomendações
+
+- Use um `judge` separado e barato (`gpt-4.1-nano`, `gemini-2.5-flash-lite`,
+  `llama-3.1-8b-instant`): a classificação roda em toda chamada.
+- Ponha os termos óbvios na blocklist, que não custa nada, e deixe o judge para
+  decidir o tema.
+- `failClosed: true` é o mais seguro quando o custo de responder fora do escopo
+  é alto; o padrão prioriza disponibilidade.
+
+Relacionado: [Erros, retry e fallback](/docs/js/errors-fallback),
+[Agentes](/docs/js/agents).

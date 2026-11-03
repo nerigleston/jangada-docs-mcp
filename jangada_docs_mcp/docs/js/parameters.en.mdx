@@ -1,0 +1,227 @@
+---
+title: "Templates, parameters and profiles"
+description: "{{ }} templates in the prompt and system, canonical generation parameters, per-model profiles and the options each call accepts."
+---
+
+## `{{ }}` templates
+
+The prompt and `system` accept `{{ variable }}` placeholders. The values go in
+`variables`, on the call:
+
+```ts
+import { LLM } from "jangada-ai";
+
+const llm = new LLM("openai", "gpt-4o-mini", {
+  system: "You work for {{ company }}. Answer in {{ language }}.",
+});
+
+const comp = await llm.complete("Hi, I'm {{ customer.name }}, order {{ order.id }}.", {
+  variables: {
+    company: "Pão Quente Bakery",
+    language: "English",
+    customer: { name: "Ana" },
+    order: { id: 4521 },
+  },
+});
+```
+
+Rules:
+
+- Dot access into nested objects: `{{ customer.name }}`.
+- Strings and numbers come out as they are. Arrays and objects come out as
+  JSON. `Date` comes out as ISO 8601.
+- Strict by default: a missing variable throws `TemplateError` (with `key` and
+  `reason: "missing"`). With `templateStrict: false` on the `LLM`, a missing
+  placeholder stays in the text unchanged.
+- Segments starting with `_` (`{{ obj._secret }}`) are refused, and properties
+  inherited from `Object`/`Array`/`Function` (`constructor`, `toString`) are not
+  read. This protects the context when user text ends up in the template.
+- Without `variables` (or with an empty object), the text goes as is, with the
+  literal braces. A prompt that happens to contain `{{ }}` does not break.
+
+The `Template` class is also exported, for use outside `LLM`:
+
+```ts
+import { Template } from "jangada-ai";
+
+const t = new Template("Order {{ id }} from {{ customer.name }}");
+t.variables();                                     // ["id", "customer.name"]
+t.render({ id: 7, customer: { name: "Ana" } });    // "Order 7 from Ana"
+new Template("Hi {{ x }}", { strict: false }).render({}); // "Hi {{ x }}"
+```
+
+In Python the variables go as kwargs (`complete(prompt, name="Ana")`). In JS
+they live in `variables` so they don't collide with the call options.
+
+## Canonical parameters
+
+`LLM` accepts canonical names and each adapter translates them to the native
+name, dropping what the provider lacks:
+
+| Canonical | OpenAI, Azure, Groq, OpenRouter, DeepSeek | Anthropic | Gemini, Vertex | Bedrock | Mistral | Ollama |
+| --- | --- | --- | --- | --- | --- | --- |
+| `temperature` | `temperature` | `temperature` | `temperature` | `temperature` | `temperature` | `temperature` |
+| `maxTokens` | `max_tokens` | `max_tokens` | `maxOutputTokens` | `maxTokens` | `maxTokens` | `num_predict` |
+| `topP` | `top_p` | `top_p` | `topP` | `topP` | `topP` | `top_p` |
+| `topK` | dropped | `top_k` | `topK` | dropped | dropped | `top_k` |
+| `stop` | `stop` | `stop_sequences` | `stopSequences` | `stopSequences` | `stop` | `stop` |
+| `seed` | `seed` | dropped | `seed` | dropped | `randomSeed` | `seed` |
+
+`maxTokens` defaults to `8192` on every provider. Pass `maxTokens: null` to not
+send the field (the provider uses its own default).
+
+```ts
+const llm = new LLM("anthropic", "claude-sonnet-4-5", { temperature: 0.2 });
+
+// this call only
+await llm.complete("Write a poem.", { params: { temperature: 0.9, maxTokens: 16384 } });
+
+// copy with other defaults (the original does not change)
+const creative = llm.withParams({ temperature: 1.0 });
+```
+
+### `extra`: native params
+
+Params with no canonical name go in `extra`, with the name the provider's SDK
+uses. Watch the casing: the `openai` package and `@anthropic-ai/sdk` use
+snake_case; `@google/genai` and `@mistralai/mistralai` use camelCase.
+
+```ts
+new LLM("openai", "gpt-5", { extra: { reasoning_effort: "low" } });
+new LLM("anthropic", "claude-sonnet-4-5", {
+  extra: { thinking: { type: "enabled", budget_tokens: 2048 } },
+});
+new LLM("gemini", "gemini-2.5-flash", { extra: { thinkingBudget: 1024 } });
+new LLM("ollama", "llama3.2", { extra: { num_ctx: 8192, keep_alive: "10m" } });
+```
+
+`params` on a call accepts the same native names, besides the canonical ones.
+
+### Removing an inherited param
+
+`withParams` ignores `undefined` and `null`. To drop a param from a derived
+`LLM`, use the `REMOVE` sentinel:
+
+```ts
+import { REMOVE } from "jangada-ai";
+
+const noTemperature = llm.withParams({ temperature: REMOVE });
+```
+
+## Per-model profiles
+
+Models from the same provider can have different contracts. Profiles adjust the
+payload per model, after translation and right before the call:
+
+- OpenAI `gpt-5` onward (except `*-chat-*`) and the `o1`/`o3`/`o4` series:
+  removes `temperature`, `top_p` and penalties; `max_tokens` becomes
+  `max_completion_tokens`.
+- Gemini 3.x onward: removes `temperature`, `topP` and `topK`.
+  `thinkingBudget` becomes `thinkingLevel` (up to 1024 `LOW`, up to 8192 `MEDIUM`
+  on Flash models, above that `HIGH`).
+- Gemini 2.5: `thinkingLevel` becomes `thinkingBudget` (`MINIMAL` 0, `LOW` 1024,
+  `MEDIUM` 8192, `HIGH` 24576; on `gemini-2.5-pro`, which cannot turn thinking
+  off, `MINIMAL` becomes 128).
+
+On Gemini, `thinkingBudget`, `thinkingLevel` and `includeThoughts` are packed
+into the native `thinkingConfig`. Pass one of the two (budget or level) and the
+library converts it to what the model accepts:
+
+```ts
+const g = new LLM("gemini", "gemini-3-flash-preview", { extra: { thinkingLevel: "LOW" } });
+await g.complete("...", { params: { thinkingBudget: 1024 } }); // becomes thinkingLevel on 3.x
+```
+
+`vertex` inherits the `gemini` rules, and `azure` the `openai` ones. When the
+model name doesn't say which base model it is (an Azure deployment with a free
+name), use `profileModel`:
+
+```ts
+new LLM("azure", "my-deploy", { profileModel: "gpt-5" }); // applies the gpt-5 rules
+```
+
+`profileModel` is only used to match rules; it is not sent to the SDK.
+
+For a new model with a different contract, register a rule. It goes in front of
+the built-in ones. Keys are those of that provider's SDK (in the example,
+`openai`, in snake_case):
+
+```ts
+import { applyProfile, registerAlias, registerProfile } from "jangada-ai";
+
+registerProfile("openai", /^my-model-/, {
+  drop: ["temperature"],
+  rename: { max_tokens: "max_completion_tokens" },
+  note: "my reasoning model",
+});
+registerAlias("my-provider", "openai"); // your provider inherits OpenAI's rules
+
+applyProfile("openai", "my-model-1", { temperature: 0.2, max_tokens: 100 });
+// { params: { max_completion_tokens: 100 }, warnings: [...] }
+```
+
+`transform` (optional) receives the params and the model, mutates the params and
+returns warnings, for rules that don't fit `drop`/`rename`. Adapters apply the
+profile without displaying the warnings; to see them, call `applyProfile()`
+directly, as above.
+
+## `LLM` options
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| `apiKey` | environment variable | provider key |
+| `system` | | default system prompt (accepts `{{ }}`) |
+| `templateStrict` | `true` | a missing variable throws `TemplateError` |
+| `temperature`, `maxTokens`, `topP`, `topK`, `stop`, `seed` | `maxTokens: 8192` | canonical params |
+| `extra` | | provider-native params |
+| `fallbacks` | `[]` | other `LLM`s tried in order |
+| `retryOn` | `DEFAULT_FAILOVER` | errors that trigger the fallback |
+| `maxRetries` | `2` | extra attempts on the same candidate |
+| `backoffBaseMs`, `backoffMaxMs` | `500`, `8000` | exponential backoff, in milliseconds |
+| `jitter` | `true` | multiplies the delay by 0.5 to 1.5 |
+| `backoffOn` | `TRANSIENT` | errors that retry on the same candidate |
+| `debug` | `false` | trace to stderr, or a function of yours |
+| `name` | the model | name in debug and observability |
+| `profileModel` | | base model for profiles |
+| `clientOptions` | | passed to the SDK constructor |
+| `cache` | | `ExactCache`, `SemanticCache` or your own |
+| `guardrails` | `[]` | input and output guardrails |
+
+Retry, backoff and fallback are covered in
+[Errors and fallback](/en/docs/js/errors-fallback); cache in
+[Cost and cache](/en/docs/js/cost-cache).
+
+## Per-call options
+
+`complete()` and `streamComplete()` take a `CompleteInput`. `parse()` and
+`stream()` take a `CallInput`, which is the same without the last three rows of
+the table.
+
+| Option | Type | What it does |
+| --- | --- | --- |
+| `system` | `string` | system for this call (overrides the `LLM`'s) |
+| `variables` | `Record<string, unknown>` | values for the `{{ }}` in the prompt and system |
+| `history` | `Message[]` | previous messages, including tool results |
+| `images` | `ImageInput[]` | `ImagePart`, data URI, http(s) URL or `[label, image]` |
+| `files` | `FileInput[]` | documents (PDF, DOCX, XLSX, CSV, TXT...) |
+| `params` | `Params` | params for this call only (override the `LLM`'s) |
+| `signal` | `AbortSignal` | cancels the call, including pending retries and fallbacks |
+| `trace` | `ObservabilitySession` | groups calls into an observability trace |
+| `tools` | `unknown[]` | function tools and native tools |
+| `toolChoice` | `"auto"`, `"none"`, `"required"` or a tool name | how the model uses tools |
+| `mcpServers` | `unknown[]` | MCP servers run by the provider |
+
+`CallOptions` is a different type: what `LLM` hands to the adapter (`params`
+already merged, `signal`, normalized tools). It only matters if you write a
+provider.
+
+```ts
+const ctrl = new AbortController();
+setTimeout(() => ctrl.abort(), 10_000);
+
+await llm.complete("Summarize {{ text }}", {
+  variables: { text: "..." },
+  params: { maxTokens: 512 },
+  signal: ctrl.signal, // or AbortSignal.timeout(10_000)
+});
+```

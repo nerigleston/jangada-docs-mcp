@@ -1,0 +1,29 @@
+{
+  "title": "JavaScript / TypeScript",
+  "description": "Pacote jangada-ai no npm",
+  "root": true,
+  "pages": [
+    "index",
+    "---Começando---",
+    "getting-started",
+    "providers",
+    "parameters",
+    "differences",
+    "---Capacidades---",
+    "structured-output",
+    "tools",
+    "streaming",
+    "vision-documents",
+    "agents",
+    "mcp",
+    "rag",
+    "interactions",
+    "a2a",
+    "guardrails",
+    "observability",
+    "eval",
+    "---Confiabilidade---",
+    "errors-fallback",
+    "cost-cache"
+  ]
+}

@@ -1,0 +1,229 @@
+---
+title: "Vision, áudio e documentos"
+description: "Imagens, transcrição de áudio, documentos (PDF, DOCX, XLSX, CSV) e detecção de objetos no jangada-ai, com leitura do disco via jangada-ai/node."
+---
+
+Imagens e documentos entram na chamada por `images` e `files`, em `complete`,
+`parse`, `stream` e `streamComplete`. O núcleo (`jangada-ai`) não lê o disco:
+ele recebe bytes, data URI ou URL. Para ler arquivos no Node, use as funções de
+`jangada-ai/node`.
+
+## Imagens
+
+Uma imagem é um `ImagePart` (`{ type: "image", data: Uint8Array, mimeType }`).
+A lib traduz para o formato nativo de cada SDK, então o mesmo código serve para
+qualquer provider com visão.
+
+```ts
+import { Image, LLM } from "jangada-ai";
+import { readImage } from "jangada-ai/node";
+
+const llm = new LLM("openai", "gpt-4o-mini");
+
+// do disco (só Node): o mime vem da extensão
+const foto = await readImage("foto.jpg");
+const comp = await llm.complete("O que aparece aqui?", { images: [foto] });
+
+// URL http(s) ou data URI também servem (a lib baixa a URL antes de enviar)
+await llm.complete("Descreva.", { images: ["https://exemplo.com/gato.png"] });
+
+// bytes de um upload
+const upload = new Uint8Array(await (await fetch("https://exemplo.com/nota.png")).arrayBuffer());
+const img = Image.fromBytes(upload, "image/png"); // ou Image.fromBase64 / Image.fromDataUri
+```
+
+Fábricas disponíveis: `Image.fromBytes(dados, mime)`, `Image.fromBase64(b64, mime)`
+e `Image.fromDataUri(uri)`. Para o caminho inverso, `imageBase64(part)` e
+`imageDataUri(part)`.
+
+Passar um caminho de arquivo como string em `images` lança `TypeError` no núcleo,
+com a dica de usar `readImage()`.
+
+### Rótulos por imagem
+
+Um item `[rótulo, imagem]` em `images` insere o rótulo como texto antes da imagem,
+na ordem dada. Itens rotulados e simples convivem na mesma lista.
+
+```ts
+import { z } from "zod";
+
+const Comparacao = z.object({ mesmoDocumento: z.boolean(), diferencas: z.array(z.string()) });
+
+const r = await llm.parse("Compare os documentos.", Comparacao, {
+  images: [
+    ["frente", await readImage("a_frente.jpg")],
+    ["verso", await readImage("a_verso.jpg")],
+  ],
+});
+console.log(r.parsed);
+```
+
+### Texto e imagem intercalados
+
+O atalho `images` põe o prompt primeiro e as imagens depois. Para controlar a
+ordem, monte a mensagem e passe em `history`, com `prompt = null`:
+
+```ts
+import { textPart, type Message } from "jangada-ai";
+
+const msg: Message = {
+  role: "user",
+  content: [
+    textPart("Documento A (frente):"),
+    await readImage("a_frente.jpg"),
+    textPart("Documento A (verso):"),
+    await readImage("a_verso.jpg"),
+    textPart("As duas imagens são do mesmo documento?"),
+  ],
+};
+const resp = await llm.complete(null, { history: [msg] });
+```
+
+## Áudio (transcrição)
+
+Áudio entra só pela transcrição, com `llm.transcribe(audio)`. As mensagens do
+`complete` não aceitam partes de áudio.
+
+| Provider | Suporte |
+| --- | --- |
+| `openai`, `azure`, `groq`, `openrouter` | endpoint `audio.transcriptions` |
+| `gemini`, `vertex` | multimodal (`generateContent`) |
+| `mistral` | Voxtral (`audio.transcriptions`) |
+| `anthropic`, `deepseek`, demais | `UnsupportedError` |
+
+```ts
+import { Audio, LLM } from "jangada-ai";
+import { readAudio } from "jangada-ai/node";
+
+const stt = new LLM("groq", "whisper-large-v3-turbo", {
+  fallbacks: [new LLM("openai", "gpt-4o-transcribe")],
+});
+
+const audio = await readAudio("entrevista.mp3", { duration: 95 }); // duração em segundos (opcional)
+const t = await stt.transcribe(audio, { language: "pt" });
+console.log(t.text, t.cost);
+
+// sem disco: bytes + mime + nome
+const outro = Audio.fromBytes(new Uint8Array(0), "audio/wav", { name: "fala.wav" });
+```
+
+Opções extras (`language`, `prompt`, `response_format`...) vão direto ao provider.
+O custo de transcrição é por minuto e só sai quando a lib conhece a duração:
+informe `duration` ou peça `response_format: "verbose_json"` (OpenAI e Groq).
+`transcribe` tem retry e fallback como `complete`.
+
+## Documentos
+
+Anexe arquivos com `files`. Por padrão a lib extrai o texto localmente, sem vision:
+sai mais barato e funciona em modelos sem visão. Cada formato usa uma dependência
+opcional, carregada só quando aparece:
+
+```bash
+npm install unpdf mammoth exceljs   # PDF, DOCX, XLSX
+npm install @napi-rs/canvas         # só para PDF em mode "vision" no Node
+```
+
+CSV, TSV, TXT, MD e JSON não precisam de nada.
+
+```ts
+import { Document, LLM } from "jangada-ai";
+import { readDocument } from "jangada-ai/node";
+
+const llm = new LLM("openai", "gpt-4o-mini");
+
+// do disco: o formato vem da extensão
+await llm.complete("Resuma:", {
+  files: [await readDocument("relatorio.pdf"), await readDocument("contrato.docx")],
+});
+
+// XLSX: todas as abas entram, cada uma rotulada (## Aba: ...)
+await llm.complete("Qual o maior total?", {
+  files: [await readDocument("vendas.xlsx", { maxRows: 200 })],
+});
+
+// bytes em memória (upload, fila): informe o nome para o formato
+const blob = new TextEncoder().encode("id;valor\n1;10\n1;10\n");
+await llm.complete("Há linhas duplicadas?", { files: [new Document(blob, { name: "x.csv" })] });
+
+// PDF escaneado: cada página vira uma imagem PNG
+await llm.complete("Transcreva a nota.", {
+  files: [await readDocument("scan.pdf", { mode: "vision", maxPages: 3 })],
+});
+```
+
+Sem `name`, o formato é deduzido pelo conteúdo (PDF, PNG, JPEG, GIF, WEBP, BMP,
+DOCX, XLSX).
+
+### Regra de `mode`
+
+| `mode` | Comportamento |
+| --- | --- |
+| `"auto"` (padrão) | extrai texto de CSV, XLSX, DOCX e PDF com texto; imagem vai por vision |
+| `"text"` | força extração de texto |
+| `"vision"` | força imagem; PDF tem as páginas renderizadas (até `maxPages`, padrão `DEFAULT_MAX_PDF_PAGES` = 20) |
+
+Formatos com extração de texto: `.csv`, `.tsv`, `.xlsx`, `.xlsm`, `.docx`, `.pdf`,
+`.txt`, `.md`, `.markdown`, `.json`, `.log`.
+
+### Erros
+
+Falhas de extração lançam `DocumentError`, com mensagem em PT-BR:
+
+- dependência ausente (`Para ler este arquivo instale: npm install unpdf`);
+- PDF sem camada de texto em `mode: "auto"` (sugere `mode: "vision"`);
+- PDF protegido por senha, arquivo corrompido, formato não suportado.
+
+CSV e TXT exportados no Brasil costumam vir em windows-1252: a lib tenta UTF-8 e
+depois cp1252 antes de cair para latin-1. Célula de fórmula sem valor calculado no
+XLSX aparece como `[fórmula sem valor calculado: =...]`.
+
+Para montar as partes você mesmo, `toParts(doc)` devolve as `ContentPart`
+(texto ou uma imagem por página).
+
+## OCR (Mistral)
+
+`llm.ocr(fonte)` extrai markdown, imagens e caixas de um documento. Só a Mistral
+suporta (`mistral-ocr-latest`); os outros providers lançam `UnsupportedError`. A
+fonte pode ser URL http(s), data URI, `Uint8Array` ou `ImagePart`. Caminho de
+arquivo não é aceito: leia os bytes antes.
+
+```ts
+import { readFile } from "node:fs/promises";
+
+const ocr = new LLM("mistral", "mistral-ocr-latest");
+const res = await ocr.ocr(new Uint8Array(await readFile("contrato.pdf")), { pages: [0, 1] });
+console.log(res.text, res.pages.length);
+```
+
+## Detecção de objetos
+
+`detectObjects(llm, imagem)` devolve caixas em pixels. Usa vision com structured
+output, então roda em qualquer provider com visão (o Gemini é o mais preciso nesse
+formato).
+
+```ts
+import { detectObjects, detectObjectsFull, LLM } from "jangada-ai";
+import { readImage } from "jangada-ai/node";
+
+const llm = new LLM("gemini", "gemini-2.5-flash");
+const img = await readImage("foto.png");
+
+const dets = await detectObjects(llm, img, { target: "todos os gatos", maxObjects: 10 });
+for (const d of dets) console.log(d.label, d.box); // box = [x1, y1, x2, y2] em pixels
+
+// com custo e uso da chamada
+const full = await detectObjectsFull(llm, img);
+console.log(full.detections.length, full.cost);
+```
+
+Cada `Detection` tem `label`, `box` (pixels, `[x1, y1, x2, y2]`) e `box2d` (cru do
+modelo, `[ymin, xmin, ymax, xmax]` em 0 a 1000). Opções: `target`, `maxObjects`,
+`instructions` (acrescenta ao prompt), `prompt` (substitui o prompt), `imageSize`,
+`params` e `signal`.
+
+As dimensões são lidas dos bytes (PNG, JPEG, GIF, BMP, WEBP) antes da chamada
+paga. Para outro formato, passe `imageSize: [largura, altura]`. A leitura da
+resposta é tolerante: caixas incompletas são descartadas em vez de lançar erro.
+
+Relacionado: [Structured output](/docs/js/structured-output),
+[Custo e cache](/docs/js/cost-cache), [Diferenças em relação ao Python](/docs/js/differences).

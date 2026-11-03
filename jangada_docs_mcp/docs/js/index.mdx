@@ -1,0 +1,102 @@
+---
+title: "Visão geral"
+description: "O pacote npm jangada-ai: a jangada em JavaScript e TypeScript, com a mesma API da lib Python adaptada às convenções do JS."
+---
+
+`jangada-ai` é o port TypeScript da [lib Python jangada](/docs). A ideia é a
+mesma: trocar provider, modelo e chave sem mudar o resto do código, com retry e
+fallback por tipo de erro, structured output, tools, streaming e custo em cada
+resposta.
+
+```ts
+import { LLM } from "jangada-ai";
+import "jangada-ai/node"; // carrega o .env do projeto
+
+const llm = new LLM("openai", "gpt-4o-mini", {
+  fallbacks: [new LLM("anthropic", "claude-haiku-4-5")],
+});
+const comp = await llm.complete("Olá, {{ nome }}!", { variables: { nome: "Ana" } });
+console.log(comp.text, comp.usage, comp.cost);
+```
+
+Versão atual: 1.0.4 (npm). A constante `VERSION`, exportada pelo pacote, traz o
+mesmo número.
+
+## O que vem no pacote
+
+O código-fonte é TypeScript. O pacote publicado é JavaScript em dois formatos,
+ESM (`import`) e CommonJS (`require`), com os tipos (`.d.ts`) junto. Funciona em
+projeto JS puro; em TypeScript você ganha autocompletar e checagem de tipos sem
+instalar `@types` nenhum.
+
+Roda em Node 22 ou mais novo, Bun, Deno e runtimes edge (Cloudflare Workers,
+Vercel Edge). O núcleo não usa o sistema de arquivos nem módulos `node:*`. O que
+depende do Node (ler arquivo, carregar `.env`, subir servidor HTTP) fica no
+subpath `jangada-ai/node`.
+
+| Import | O que tem |
+| --- | --- |
+| `jangada-ai` | `LLM` (`complete`, `parse`, `stream`, `streamComplete`, `embed`, `transcribe`, `ocr`), templates, retry e fallback, erros normalizados, custo, profiles, tools e tools nativas, vision e documentos, cache, guardrails, `Agent`, `Squad`, `Flow`, `Graph`, `GeminiInteractions`, observability |
+| `jangada-ai/node` | `loadEnv`, `readImage`, `readDocument`, `readAudio`, `runInSession`, `serveMcp`, `serveA2a`. Importar carrega o `.env` |
+| `jangada-ai/mcp` | `MCPClient`, `runAgent`, servidor MCP e Code Mode |
+| `jangada-ai/rag` | `RAG`, chunking, rerank e stores (memória, pgvector, MongoDB) |
+| `jangada-ai/eval` | `Dataset`, `Evaluator`, `evaluate` |
+| `jangada-ai/prebuilt` | tools prontas: calculadora, data e hora, CPF/CNPJ, CEP, Wikipedia, Brave, Tavily, clima, HTTP |
+| `jangada-ai/a2a` | servidor A2A no padrão web (`Request` → `Response`) |
+
+## SDKs carregados sob demanda
+
+Os SDKs dos providers (`openai`, `@anthropic-ai/sdk`, `@google/genai` e outros)
+são `peerDependencies` opcionais. Você instala só os que for usar. O adapter de
+cada provider só é carregado na primeira chamada, e o SDK entra por
+`await import()` dentro dele. Por isso `import "jangada-ai"` funciona sem nenhum
+SDK instalado, e quem usa só a OpenAI nunca carrega o adapter da Anthropic.
+
+Se o SDK faltar, o erro aparece na primeira chamada, com o comando de instalação
+na mensagem (`Instale o SDK da OpenAI para usar 'openai': npm install openai`). A
+tabela completa de peers está em [Começando](/docs/js/getting-started).
+
+## Paridade com o Python
+
+A versão 1.0 cobre o que a lib Python faz: 11 providers, retry e fallback,
+structured output, tools e tools nativas, streaming, vision e documentos,
+transcrição, embeddings, OCR, custo, cache, guardrails, agentes, MCP, RAG,
+Gemini Interactions, A2A, observability e eval.
+
+Os casos de template, classificação de erro, cálculo de custo, profiles e o
+catálogo de preços são gerados pela lib Python e testados no port, então os dois
+lados dão o mesmo resultado. O RAG usa o mesmo esquema no Postgres e no MongoDB:
+Python e JS podem ler e escrever no mesmo banco.
+
+As diferenças são de linguagem: só API async, nomes em camelCase, variáveis do
+template num objeto, Zod no lugar de Pydantic, `signal` para cancelar. A lista
+completa está em [Diferenças em relação ao Python](/docs/js/differences).
+
+## Páginas desta seção
+
+Começando:
+
+- [Começando](/docs/js/getting-started): instalação, `.env`, primeira chamada em ESM e CommonJS.
+- [Providers](/docs/js/providers): os 11 providers, chaves, `apiKey`, `clientOptions` e particularidades.
+- [Parâmetros](/docs/js/parameters): templates `{{ }}`, params de geração, profiles por modelo e opções de chamada.
+- [Diferenças em relação ao Python](/docs/js/differences)
+
+Capacidades:
+
+- [Structured output](/docs/js/structured-output): Zod, Standard Schema e JSON Schema com `parse()`.
+- [Tools](/docs/js/tools): `tool()`, loop de tool calls e tools nativas.
+- [Streaming](/docs/js/streaming): `stream()`, `streamComplete()` e cancelamento.
+- [Vision e documentos](/docs/js/vision-documents)
+- [Agentes](/docs/js/agents)
+- [MCP](/docs/js/mcp)
+- [RAG](/docs/js/rag)
+- [Gemini Interactions](/docs/js/interactions)
+- [A2A](/docs/js/a2a)
+- [Guardrails](/docs/js/guardrails)
+- [Observability](/docs/js/observability)
+- [Eval](/docs/js/eval)
+
+Confiabilidade:
+
+- [Erros e fallback](/docs/js/errors-fallback)
+- [Custo e cache](/docs/js/cost-cache)

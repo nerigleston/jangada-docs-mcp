@@ -1,0 +1,208 @@
+---
+title: "Observability"
+description: "Traces automáticos das chamadas do jangada-ai no dashboard, sessões com observabilitySession e runInSession, feedback, prompts versionados e experimentos."
+---
+
+Com a chave do projeto no ambiente, cada chamada de LLM vira uma observation no
+dashboard ([app.jangada.dev.br](https://app.jangada.dev.br)): provider, modelo,
+tokens, custo, latência, input, output, tool calls e capacidades usadas. O envio
+roda em background e nunca derruba a chamada.
+
+## Ativar
+
+```bash
+# .env
+JANGADA_OBSERVABILITY=true
+JANGADA_OBSERVABILITY_API_KEY=lobs_xxx   # chave do projeto (gerada no dashboard)
+# opcional (padrão: plataforma oficial)
+# JANGADA_OBSERVABILITY_ENDPOINT=https://api.jangada.dev.br
+```
+
+```ts
+import { LLM } from "jangada-ai";
+import "jangada-ai/node"; // carrega o .env e liga o flush no fim do processo
+
+const llm = new LLM("openai", "gpt-4o-mini");
+await llm.complete("Resuma: ..."); // já vai para o dashboard
+```
+
+A flag precisa ser `1`, `true`, `yes`, `on` ou `sim`, e a chave precisa existir.
+Faltando uma das duas, nada é enviado. O endpoint precisa ser `https://` (`http://`
+só em localhost); outro endereço desliga o envio com um aviso no console.
+
+Fora do Node (Workers, Vercel Edge), `process.env` pode não existir. Nesse caso
+passe a chave na sessão (ver [Uma chave por empresa](#uma-chave-por-empresa)).
+
+## O que é enviado
+
+| Método | Observation | Tokens e custo |
+| --- | --- | --- |
+| `complete`, `parse` | sim | sim |
+| `streamComplete` | sim (`stream_complete`) | sim |
+| `stream` | sim (`stream`) | não |
+| `transcribe` | sim | custo por minuto, quando a duração é conhecida |
+| `embed` | sim (contagem e dimensão dos vetores) | sim |
+
+`stream()` só entrega texto, sem usage do provider, então a observation dele não
+tem tokens nem custo. Se precisa disso, use `streamComplete()`. Nos dois a
+latência conta desde o pedido até o último pedaço, incluindo a espera pelo 1º.
+
+Cada observation tem `status`: `OK`, `INCOMPLETE` (resposta cortada por
+`maxTokens`, `finishReason === "length"`) ou `ERROR` (todos os candidatos
+falharam, com tipo e mensagem do erro). Textos longos de input e output são
+truncados.
+
+Capacidades detectadas: `vision` (`images`), `documents` (`files`), `tools`,
+`mcp`, `structured_output` (`parse`), `guardrails`, `streaming`, `cache`,
+`audio` e `embeddings`. No dashboard viram badges e filtro.
+
+## Encerramento
+
+Os envios ficam pendentes em memória. Com `import "jangada-ai/node"`, a lib
+espera os pendentes no `beforeExit` do processo. Em serverless (Lambda, Workers,
+rotas do Next), chame `flushObservability()` antes de responder, senão o último
+trace pode se perder:
+
+```ts
+import { flushObservability, LLM } from "jangada-ai";
+
+export async function POST(req: Request): Promise<Response> {
+  const llm = new LLM("openai", "gpt-4o-mini");
+  const comp = await llm.complete(await req.text());
+  await flushObservability(); // prazo padrão: 5000 ms; nunca lança
+  return new Response(comp.text);
+}
+```
+
+Acima de 1000 envios pendentes, os novos eventos são descartados; `droppedCount()`
+diz quantos.
+
+## Agrupar chamadas num trace
+
+Sem sessão, cada chamada vira um trace próprio, com o nome do script de entrada
+(`node resumo.ts` vira `resumo`) ou, na falta dele, do método.
+
+Para juntar várias chamadas no mesmo trace, crie uma sessão com
+`observabilitySession()` e passe em `trace`. Funciona em qualquer runtime:
+
+```ts
+import { LLM, observabilitySession } from "jangada-ai";
+
+const llm = new LLM("openai", "gpt-4o-mini");
+const sessao = observabilitySession({ name: "resumo+tradução", userId: "cliente-123" });
+
+const r1 = await llm.complete("Resuma: ...", { trace: sessao });
+const r2 = await llm.complete(`Traduza: ${r1.text}`, { trace: sessao });
+console.log(sessao.id); // id do trace
+```
+
+No Node, `runInSession` de `jangada-ai/node` dispensa passar `trace` em cada
+chamada (usa `AsyncLocalStorage`). Vale também para chamadas feitas dentro de
+agentes, flows e tools:
+
+```ts
+import { runInSession } from "jangada-ai/node";
+
+const traceId = await runInSession({ name: "suporte", sessionId: "conversa-42" }, async (s) => {
+  await llm.complete("Como emito uma NF?");
+  await llm.complete("E para cancelar?");
+  return s.id;
+});
+```
+
+Opções da sessão: `id` (reaproveita um id externo; o backend acrescenta ao mesmo
+trace), `name`, `userId`, `sessionId`, `metadata`, `apiKey` e `endpoint`. Um
+`trace` passado na chamada vence a sessão do `runInSession`.
+
+## Uma chave por empresa
+
+Num SaaS em que cada cliente tem o próprio projeto no dashboard, passe a chave do
+cliente na sessão. Só as chamadas dessa sessão vão para o projeto dele, e o envio
+liga mesmo sem `JANGADA_OBSERVABILITY=true`:
+
+```ts
+import { observabilitySession } from "jangada-ai";
+
+async function atender(empresa: { obsKey: string; conversaId: string }, pergunta: string) {
+  const sessao = observabilitySession({ apiKey: empresa.obsKey, sessionId: empresa.conversaId });
+  return llm.complete(pergunta, { trace: sessao });
+}
+```
+
+`endpoint` na sessão aponta para outra instalação da plataforma, com a mesma regra
+de `https://`.
+
+## Feedback
+
+`feedback(traceId, valor)` anexa a reação do usuário final ao trace (1 para
+positivo, -1 ou 0 para negativo). Vira um score de origem `api` no dashboard.
+Devolve `true` se enviou e `false` se faltou chave ou a rede falhou; nunca lança.
+
+```ts
+import { feedback } from "jangada-ai";
+
+await feedback(sessao.id, 1, { comment: "resolveu meu problema" });
+await feedback(sessao.id, -1, { name: "precisao", comment: "valor errado" });
+```
+
+Opções: `name` (padrão `"thumbs"`), `comment`, `apiKey` e `endpoint` (chave do
+tenant dono do trace) e `timeoutMs`. Dentro de `runInSession` com `apiKey`, usa a
+chave da sessão.
+
+## Prompts versionados
+
+O prompt registry guarda versões de prompt no dashboard. Usa a mesma chave
+(`JANGADA_OBSERVABILITY_API_KEY`) e o mesmo endpoint.
+
+```ts
+import { LLM, PromptVersion } from "jangada-ai";
+
+// publica uma versão nova (imutável) e move a tag para ela
+await PromptVersion.push("assistente-fiscal", "Você atende {{ cliente }}. Seja direto.", {
+  tag: "production",
+});
+
+// busca a versão com a tag pedida; sem tag, "production"; sem ela, a mais nova
+const p = await PromptVersion.pull("assistente-fiscal");
+const llm = new LLM("openai", "gpt-4o-mini");
+await llm.complete(p.render({ cliente: "ACME" }), { trace: p.trace() });
+```
+
+`p.trace()` devolve uma sessão marcada com o nome e a versão do prompt, e o trace
+registra `promptName` e `promptVersion`. Para herdar nome e usuário de uma sessão
+que já existe, use `p.trace(sessao)`. Erros HTTP do registry viram `LLMError`
+(404 vira `NotFoundError`, 401 vira `AuthError`).
+
+## Experimentos
+
+`evaluate` de `jangada-ai/eval` roda um dataset contra um alvo e agrega scores,
+custo e latência. Com `push: true`, o resultado vai para o dashboard como
+experimento:
+
+```ts
+import { Dataset, Evaluator, evaluate } from "jangada-ai/eval";
+
+const dados = new Dataset([{ inputs: { pergunta: "2+2?" }, reference: "4" }], { name: "contas" });
+const res = await evaluate(
+  dados,
+  (ex) => llm.complete(String(ex.inputs.pergunta)),
+  [Evaluator.fn("acerto", (out, ref) => out.text.includes(ref))],
+  { name: "gpt-4o-mini v1", push: true, targetInfo: { provider: "openai", model: "gpt-4o-mini" } },
+);
+console.log(res.aggregate, res.pushed, res.pushError);
+```
+
+O envio é best-effort: falha de rede fica em `pushError` e não derruba o
+resultado. Detalhes em [Eval](/docs/js/eval).
+
+## Variáveis de ambiente
+
+| Variável | Uso |
+| --- | --- |
+| `JANGADA_OBSERVABILITY` | liga o envio (`true`, `1`, `yes`, `on`, `sim`) |
+| `JANGADA_OBSERVABILITY_API_KEY` | chave do projeto (`lobs_...`) |
+| `JANGADA_OBSERVABILITY_ENDPOINT` | endpoint alternativo (`https://`) |
+| `JANGADA_NO_OBSERVABILITY_SEND` | desliga o envio mesmo com tudo configurado (testes) |
+
+Relacionado: [Custo, cache e debug](/docs/js/cost-cache),
+[observabilidade na lib Python](/docs/observability).

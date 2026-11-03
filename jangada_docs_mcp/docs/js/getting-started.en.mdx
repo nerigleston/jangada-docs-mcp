@@ -1,0 +1,186 @@
+---
+title: "Getting started"
+description: "Install jangada-ai, load keys from .env and make your first call in ESM, CommonJS or TypeScript."
+---
+
+## Installation
+
+```bash
+npm install jangada-ai
+```
+
+The package ships no provider SDK. Install alongside it only the ones you use
+(works the same with `pnpm add`, `yarn add` and `bun add`):
+
+```bash
+npm install jangada-ai openai              # OpenAI, Azure, Groq, OpenRouter, DeepSeek
+npm install jangada-ai @anthropic-ai/sdk zod  # Anthropic + structured output with Zod
+```
+
+### Providers
+
+| Provider | Install |
+| --- | --- |
+| `openai`, `azure`, `groq`, `openrouter`, `deepseek` | `openai` (6 or newer) |
+| `anthropic` | `@anthropic-ai/sdk` |
+| `gemini`, `vertex` | `@google/genai` (`GeminiInteractions` needs 1.33 or newer) |
+| `bedrock` | `@aws-sdk/client-bedrock-runtime` |
+| `mistral` | `@mistralai/mistralai` |
+| `ollama` | nothing: the adapter talks HTTP directly to the server |
+
+### Optional capabilities
+
+| Feature | Install |
+| --- | --- |
+| Structured output with Zod | `zod` (4.2 or newer) |
+| PDF, DOCX and XLSX in the prompt | `unpdf`, `mammoth`, `exceljs` |
+| PDF as image (vision mode) on Node | `@napi-rs/canvas` |
+| MCP, client and server | `@modelcontextprotocol/sdk` |
+| MCP Code Mode | `quickjs-emscripten` |
+| RAG on Postgres / MongoDB | `pg` / `mongodb` |
+
+All of them are optional `peerDependencies`: npm does not install them for you
+and does not complain if they are missing. If you use a feature without its
+package, the error comes from the call, with the install command in the message.
+
+Requirements: Node 22 or newer, Bun, Deno or an edge runtime.
+
+## Keys and `.env`
+
+Each provider reads its key from an environment variable (`OPENAI_API_KEY`,
+`ANTHROPIC_API_KEY`, `GEMINI_API_KEY`...; the list is in
+[Providers](/en/docs/js/providers)). On Node, the simplest way is a `.env` file
+at the project root:
+
+```bash
+# .env
+OPENAI_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+and import `jangada-ai/node` once, at the application's entry point:
+
+```ts
+import "jangada-ai/node"; // reads .env into process.env
+```
+
+As in the Python library, loading does not overwrite variables already set in
+the environment. The file is searched from the current directory upward, up to
+the project root (folder with `package.json` or `.git`) and never past HOME. To
+turn it off, set `JANGADA_NO_DOTENV=1`. To load another file, call `loadEnv()`:
+
+```ts
+import { loadEnv } from "jangada-ai/node";
+
+loadEnv(".env.local");                     // does not overwrite existing values
+loadEnv(".env.test", { override: true });  // overwrites
+```
+
+Key precedence: `apiKey` passed to `LLM` > environment variable > `.env` value.
+
+The core (`jangada-ai`) never touches the disk. On edge (Cloudflare Workers,
+Vercel Edge) do not import `jangada-ai/node`: pass the key in `apiKey` or use the
+variables the runtime exposes in `process.env`.
+
+## First call
+
+ESM (JavaScript or TypeScript):
+
+```ts
+import { LLM } from "jangada-ai";
+import "jangada-ai/node";
+
+const llm = new LLM("openai", "gpt-4o-mini", { system: "Answer in one sentence." });
+const comp = await llm.complete("What is a jangada?");
+
+console.log(comp.text);
+console.log(comp.usage);         // { inputTokens, outputTokens, ... }
+console.log(comp.cost);          // estimated cost in USD (or null with no price)
+console.log(comp.finishReason);  // "stop", "length", "tool_calls"...
+```
+
+CommonJS:
+
+```js
+const { LLM } = require("jangada-ai");
+require("jangada-ai/node");
+
+async function main() {
+  const llm = new LLM("openai", "gpt-4o-mini");
+  const comp = await llm.complete("What is a jangada?");
+  console.log(comp.text);
+}
+
+main();
+```
+
+The whole API is async: `complete`, `parse` and the other methods return a
+`Promise`, and `stream`/`streamComplete` return an `AsyncIterable`. There is no
+sync version.
+
+## What `complete()` takes
+
+```ts
+llm.complete(prompt, {
+  system: "You work for {{ company }}.",  // overrides the LLM's system
+  variables: { company: "Pão Quente Bakery" },
+  history: [],          // previous messages (Message[])
+  images: [],           // ImagePart, data URI, http(s) URL or [label, image]
+  files: [],            // Document: PDF, DOCX, XLSX, CSV, TXT...
+  params: { temperature: 0.2 },  // params for this call only
+  tools: [],            // function tools and native tools
+  toolChoice: "auto",
+  signal: AbortSignal.timeout(30_000),
+});
+```
+
+- `prompt` accepts `{{ variables }}`, filled from `variables`. `null`
+  continues the conversation from `history` only (tool loops).
+- `parse(prompt, schema, options)` takes the same options, except `tools`,
+  `toolChoice` and `mcpServers`. See [Structured output](/en/docs/js/structured-output).
+- Details on each option in [Parameters](/en/docs/js/parameters).
+
+## Switching provider
+
+Switching provider means changing two strings. The rest of the code stays the
+same, including `parse`, tools and streaming:
+
+```ts
+new LLM("openai", "gpt-4o-mini");
+new LLM("anthropic", "claude-sonnet-4-5");
+new LLM("gemini", "gemini-2.5-flash");
+new LLM("groq", "openai/gpt-oss-20b");
+new LLM("ollama", "llama3.2");  // local, no key
+```
+
+To try another provider when the first one fails, use `fallbacks`:
+
+```ts
+const llm = new LLM("openai", "gpt-4o-mini", {
+  maxRetries: 2,  // 429, 5xx and timeout retry on the same model
+  fallbacks: [new LLM("anthropic", "claude-haiku-4-5")],
+});
+console.log(llm.toString()); // LLM("openai", "gpt-4o-mini", fallbacks=1)
+```
+
+`availableProviders()` lists the registered providers. An unknown name throws
+in the constructor.
+
+## Closing connections
+
+`LLM` keeps the SDK client and reuses it across calls. In scripts and tests,
+close it at the end with `close()` or with `await using`:
+
+```ts
+{
+  await using llm = new LLM("anthropic", "claude-haiku-4-5");
+  await llm.complete("Hi");
+} // close() runs here, fallbacks included
+```
+
+## Next steps
+
+- [Providers](/en/docs/js/providers): keys, `baseURL` and per-provider details.
+- [Parameters](/en/docs/js/parameters): templates, generation params and profiles.
+- [Structured output](/en/docs/js/structured-output), [Tools](/en/docs/js/tools) and [Streaming](/en/docs/js/streaming).
+- [Errors and fallback](/en/docs/js/errors-fallback): the full retry policy.

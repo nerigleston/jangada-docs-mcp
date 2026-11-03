@@ -1,0 +1,153 @@
+---
+title: "Streaming"
+description: "Texto incremental com stream(), eventos com a resposta completa no fim com streamComplete() e cancelamento com AbortSignal."
+---
+
+Há dois métodos de streaming, ambos `AsyncIterable`:
+
+- `stream()` entrega só o texto, pedaço a pedaço.
+- `streamComplete()` entrega eventos de texto e, no fim, a `Completion`
+  completa, com tool calls, usage e custo.
+
+## `stream()`
+
+```ts
+import { LLM } from "jangada-ai";
+
+const llm = new LLM("anthropic", "claude-haiku-4-5");
+
+for await (const pedaco of llm.stream("Conte até 5 por extenso.")) {
+  process.stdout.write(pedaco);
+}
+```
+
+Aceita as mesmas opções do `parse()`: `system`, `variables`, `history`,
+`images`, `files`, `params`, `signal` e `trace`. Não aceita `tools`; para isso
+use `streamComplete()`.
+
+Como resposta HTTP (Hono, Next.js route handler, Workers), transforme o
+iterador num `ReadableStream`:
+
+```ts
+export async function POST(req: Request): Promise<Response> {
+  const { pergunta } = (await req.json()) as { pergunta: string };
+  const encoder = new TextEncoder();
+  const corpo = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      for await (const pedaco of llm.stream(pergunta, { signal: req.signal })) {
+        controller.enqueue(encoder.encode(pedaco));
+      }
+      controller.close();
+    },
+  });
+  return new Response(corpo, { headers: { "content-type": "text/plain; charset=utf-8" } });
+}
+```
+
+## `streamComplete()`: texto e resposta completa
+
+Num agente, o modelo escreve e no meio pede ferramentas. `streamComplete()`
+emite eventos `"text"` enquanto a resposta é gerada e um evento `"done"` no fim,
+com a `Completion` igual à de `complete()` (`toolCalls`, `usage`, `cost`,
+`finishReason`, `citations`).
+
+```ts
+for await (const ev of llm.streamComplete("Como está o tempo em Recife?", { tools: [clima] })) {
+  if (ev.type === "text") {
+    process.stdout.write(ev.text);
+  } else {
+    const comp = ev.completion; // "done"
+    for (const call of comp.toolCalls) {
+      // execute e reenvie, como no complete()
+    }
+    console.log("\ncusto:", comp.cost);
+  }
+}
+```
+
+O tipo do evento é `StreamEvent`:
+
+```ts
+type StreamEvent =
+  | { type: "text"; text: string }
+  | { type: "done"; text: ""; completion: Completion };
+```
+
+- Aceita as mesmas opções de `complete()`, inclusive `tools`, `toolChoice` e
+  `mcpServers`.
+- Streaming token a token em OpenAI, Azure, DeepSeek, Anthropic, Bedrock,
+  Mistral e Ollama. Nos demais (Gemini, Vertex, Groq, OpenRouter), e quando a
+  chamada vai pela Responses API da OpenAI (tools nativas), a chamada é a normal:
+  o texto chega num evento só, seguido do `"done"`. Custo e tool calls nunca se
+  perdem.
+- Com tools nativas na Mistral e no Ollama, a chamada também é a normal,
+  entregue de uma vez.
+- O `"done"` é reportado à observability com a capability `streaming`.
+
+## Retry e fallback
+
+Retry e fallback valem até o primeiro pedaço chegar. Se a abertura do stream
+falhar com erro transitório, a lib tenta de novo com backoff e, se esgotar, cai
+para o próximo candidato de `fallbacks`, tudo antes de você receber qualquer
+texto. Depois do primeiro pedaço, um erro sobe direto: o texto já saiu e
+repetir duplicaria a resposta.
+
+```ts
+const llm = new LLM("openai", "gpt-4o-mini", {
+  fallbacks: [new LLM("anthropic", "claude-haiku-4-5")],
+});
+for await (const pedaco of llm.stream("Uma curiosidade sobre o Recife.")) {
+  process.stdout.write(pedaco); // vem do primeiro candidato que abriu o stream
+}
+```
+
+Veja [Erros e fallback](/docs/js/errors-fallback) para a política completa.
+
+## Cancelar com `AbortSignal`
+
+Toda chamada aceita `signal`. Abortar interrompe o stream em andamento, a espera
+do backoff e os fallbacks pendentes. O cancelamento nunca passa por retry nem
+fallback: o erro sobe direto. Antes do primeiro pedaço, o erro é o `reason` do
+sinal (`AbortError`, ou `TimeoutError` com `AbortSignal.timeout`); no meio do
+stream, pode ser o erro de cancelamento do SDK. Por isso o exemplo confere
+`signal.aborted` em vez do tipo do erro.
+
+```ts
+const ctrl = new AbortController();
+setTimeout(() => ctrl.abort(), 2_000);
+
+try {
+  for await (const pedaco of llm.stream("Escreva um texto longo.", { signal: ctrl.signal })) {
+    process.stdout.write(pedaco);
+  }
+} catch (e) {
+  if (ctrl.signal.aborted) console.log("\n(cancelado)");
+  else throw e;
+}
+```
+
+## Guardrails e cache
+
+- Guardrail de entrada vale para os dois métodos: se barrar, `stream()` emite o
+  texto de recusa e `streamComplete()` emite o texto e um `"done"` com a
+  `Completion` de recusa.
+- Guardrail de saída e cache não se aplicam ao streaming (o texto já saiu).
+
+## Usage depois de um `stream()`
+
+`stream()` entrega só texto. Para tokens e custo, use `streamComplete()`. Os
+adapters do dialeto OpenAI (OpenAI, Azure, Groq, OpenRouter, DeepSeek) e o do
+Ollama guardam `usage` e `finishReason` do último stream no campo `lastStream`
+da instância do provider (`await llm.getProvider()`). O campo não está no tipo
+base `Provider` e vale por instância: com chamadas concorrentes no mesmo `LLM`,
+traz o último stream que terminou.
+
+## Diferenças em relação ao Python
+
+| Python | JS |
+| --- | --- |
+| `stream()` e `astream()` | só `stream()`, async |
+| `stream_complete()` e `astream_complete()` | só `streamComplete()` |
+| `ev.completion.tool_calls` | `ev.completion.toolCalls` |
+| sem cancelamento | `signal` |
+| `stream_complete` token a token em Anthropic, OpenAI, Azure e DeepSeek | também em Bedrock, Mistral e Ollama |

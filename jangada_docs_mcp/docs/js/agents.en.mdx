@@ -1,0 +1,270 @@
+---
+title: "Agents, flows and graphs"
+description: "Agent, Squad, Flow, Graph, plan and stepBack in jangada-ai, plus the ready-made tools from the jangada-ai/prebuilt subpath."
+---
+
+Orchestration in `jangada-ai` is built from what the library already has (tool
+calling, structured output, MCP and RAG). Everything comes from the main import,
+except the ready-made tools, which live in `jangada-ai/prebuilt`.
+
+```ts
+import { Agent, Flow, Graph, plan, RAGMemory, Squad, stepBack, tool } from "jangada-ai";
+```
+
+Every call is asynchronous and accepts `signal` (`AbortSignal`). There is no
+`arun`/`astream` as in Python: `run` and `stream` are already async.
+
+## Agent
+
+An `Agent` is an `LLM` with a role, a goal and tools. `run()` drives the tool
+calling loop until the model stops asking for tools or until `maxIterations`
+(default 8).
+
+```ts
+import * as z from "zod";
+import { Agent, LLM, tool } from "jangada-ai";
+
+const weather = tool({
+  name: "weather",
+  description: "Returns the weather for a city.",
+  parameters: z.object({ city: z.string() }),
+  execute: async ({ city }) => `sunny in ${city}, 28°C`,
+});
+
+const llm = new LLM("openai", "gpt-4o-mini");
+const forecaster = new Agent(llm, {
+  role: "Forecaster",
+  goal: "report the weather clearly",
+  tools: [weather],
+});
+
+const res = await forecaster.run("What's the weather in Recife?");
+console.log(res.text, res.cost, res.iterations);
+```
+
+Constructor options:
+
+| Option | What it does |
+| --- | --- |
+| `role`, `goal`, `backstory` | Build the system prompt (in Portuguese: `Você é {role}. Seu objetivo: {goal}. {backstory}`). Default `role`: `"assistente"`. |
+| `tools` | Function tools (`tool({ ..., execute })`) and native tools (`webSearch()`...). A native tool runs on the provider and shows up in `toolTrace` with `server: true`. |
+| `mcpClient` | A connected `MCPClient`: the server's tools join the loop. See [MCP](/en/docs/js/mcp). |
+| `mcpAllowedTools` | Restricts the MCP tools. A tool outside the list does not run, even if the model makes up the name. |
+| `mcpToolsCache` | MCP tools already listed (`await mcpTools(mcp)`), so `listTools()` is not called on every `run`. |
+| `onToolCall(call)` | Runs before each tool call. Returning `false` vetoes the call. |
+| `onToolResult(call, result)` | Runs after each tool call. |
+| `memory` | Long-term memory (`RAGMemory` or any object with `recall`/`remember`). |
+| `maxIterations` | Cap on model → tools rounds. Default 8. |
+
+`run(task, { context, history, signal })` returns an `AgentResult`:
+
+- `text`, `messages` (the turn's history), `usage`, `cost`, `iterations`.
+- `costComplete`: `false` if some call had no known price.
+- `stoppedByLimit`: `true` when the loop hit `maxIterations` with tool calls still
+  pending. In that case `text` is not the final answer (the library also emits a
+  `console.warn`).
+- `toolTrace`: `{ call, result, isError, server? }` for each call.
+
+### Multi-turn conversation
+
+`history` takes the previous turns, which go in before the new task. Store
+`res.messages` and pass it back on the next turn:
+
+```ts
+const history = [
+  { role: "user" as const, content: "How much did I spend in May?" },
+  { role: "assistant" as const, content: "R$ 3,200 in May." },
+];
+const turn = await forecaster.run("And the month before?", { history });
+```
+
+### Streaming
+
+`stream()` emits the final answer in chunks. Without tools, it is real streaming
+from the provider. With tools, the loop runs first and the final text comes out
+in chunks of `chunkSize` characters (default 24), without generating the answer
+twice. At the end, `lastStreamResult` holds the turn's `AgentResult`.
+
+```ts
+for await (const chunk of forecaster.stream("Summarize this week's weather")) {
+  process.stdout.write(chunk);
+}
+console.log(forecaster.lastStreamResult?.toolTrace);
+```
+
+### Long-term memory
+
+`RAGMemory` searches the RAG for relevant content before answering (`k` chunks,
+default 3) and stores each final answer afterwards. Failures become a
+`console.warn` and do not break the agent. Turns that stopped at the limit are
+not stored.
+
+```ts
+import { RAG, vectorStore } from "jangada-ai/rag";
+
+const rag = new RAG(new LLM("openai", "text-embedding-3-small"), vectorStore("memory"));
+const support = new Agent(llm, { role: "Support", memory: new RAGMemory(rag, { k: 3 }) });
+```
+
+### Agent Card
+
+`card({ url, version, securitySchemes, security })` returns the metadata in the
+A2A Agent Card format (`protocolVersion` `"0.3.0"`, `skills` built from the
+tools). To serve the agent over HTTP, see [A2A](/en/docs/js/a2a).
+
+## Squad
+
+`Squad` coordinates several agents. The default is sequential: each agent gets
+the previous one's output as context.
+
+```ts
+const researcher = new Agent(llm, { role: "Researcher", goal: "gather facts" });
+const writer = new Agent(llm, { role: "Writer", goal: "write clear text" });
+
+const r = await new Squad([researcher, writer]).run("A paragraph about jangadas.");
+console.log(r.text); // last agent's output
+console.log(r.outputs); // { Researcher: "...", Writer: "..." }
+```
+
+- `context: "last"` (default): each agent sees only the previous output.
+- `context: "full"`: each agent sees the whole transcript, labeled by role. More
+  context and higher cost on long chains.
+
+With `manager`, the mode is hierarchical: the manager gets
+`delegar_para_<role>` tools (accents removed, unique names, up to 64
+characters) and decides whom to delegate to. The manager is a copy of the
+original agent, so `onToolCall`, MCP and memory still apply.
+
+```ts
+const manager = new Agent(llm, { role: "Manager", goal: "coordinate the team" });
+const r2 = await new Squad([researcher, writer], { manager }).run("Summary on topic X");
+```
+
+`SquadResult` has `text`, `outputs` (role → output; repeated roles become
+`Reviewer#2`), `usage` and `cost` summing the manager and the members,
+`costComplete` and `steps`: one entry per agent or delegation with `role`,
+`usage`, `cost`, `costComplete` and `durationMs`.
+
+## plan
+
+`plan(llm, goal, { maxTasks })` breaks a goal into tasks using structured
+output. Default: up to 5 tasks. If the model does not return a structured plan,
+it throws `Error`.
+
+```ts
+for (const task of await plan(llm, "Launch a newsletter about AI", { maxTasks: 5 })) {
+  console.log("-", task);
+}
+```
+
+## Flow
+
+`Flow` chains steps. Each step's output becomes a `{{ name }}` variable for the
+following steps.
+
+```ts
+const flow = new Flow(llm)
+  .step("draft", "Write a paragraph about {{ topic }}.")
+  .step("review", "Review and improve:\n{{ draft }}", { output: "final" });
+
+const fr = await flow.run({ topic: "jangadas of Northeast Brazil" });
+console.log(fr.get("final"), fr.last, fr.cost);
+```
+
+`step()` options: `system`, `llm` (another model just for this step), `output`
+(variable name, defaults to the step name) and `schema` (uses `parse()`; read it
+with `fr.parsed("step")`). A repeated step name becomes `name#2` in
+`completions`, without losing its cost. `FlowResult` has `outputs`, `context`,
+`completions`, `last`, `usage`, `cost` and `costComplete`.
+`new Flow(llm, { debug: true })` prints each step to stderr.
+
+## Graph
+
+`Graph` has conditional routing, parallel blocks and capped cycles.
+
+```ts
+const g = new Graph()
+  .node("triage", llm, "Classify as 'sales' or 'support': {{ msg }}")
+  .node("sales", llm, "Answer as a salesperson: {{ msg }}")
+  .node("support", llm, "Help with: {{ msg }}")
+  .node("close", llm, "Close the ticket: {{ support }}")
+  .route("triage", (ctx) => (String(ctx.triage).includes("support") ? "support" : "sales"))
+  .connect("support", "close");
+
+const gr = await g.run("triage", { msg: "the app won't open" });
+console.log(gr.path, gr.get("close"), gr.durationsMs);
+```
+
+- `connect(from, to)` is the fixed edge. In Python it is called `then()`; in JS
+  that name would make the `Graph` look like a Promise.
+- `route(from, (ctx) => next)`: returning `null` ends the run.
+- `new Graph({ maxSteps })` (default 50) stops cycles that never end.
+
+Parallel block: `parallel(name, { branch: [llm, prompt] }, options)`. Each branch
+writes its output to a variable named after the branch.
+
+```ts
+const pg = new Graph()
+  .parallel(
+    "analyses",
+    { risks: [llm, "Risks of {{ idea }}"], costs: [llm, "Costs of {{ idea }}"] },
+    { join: "synthesis", onError: "skip", maxConcurrency: 4, summarize: true },
+  )
+  .node("synthesis", llm, "Risks: {{ risks }}\nCosts: {{ costs }}\nConclude.");
+```
+
+- `onError: "raise"` (default): a failing branch breaks the run and its siblings
+  are cancelled through `AbortSignal`. `"skip"`: the branch stays empty and goes
+  to `gr.failures`.
+- `maxConcurrency`: cap on simultaneous branches.
+- `summarize`: `true` or an instruction; each branch summarizes its own output
+  before the join. The summary shows up as `branch:resumo` in `completions` and
+  counts toward the cost.
+
+`GraphResult` has `outputs`, `completions`, `context`, `path`, `durationsMs`,
+`failures`, `parsed(node)`, `usage`, `cost` and `costComplete`.
+
+## stepBack
+
+`stepBack(llm, question)` generates a broader question to retrieve background
+context in RAG. Search with both and merge the chunks.
+
+```ts
+const question = "What are the treatment options for cataracts?";
+const broad = await stepBack(llm, question, { instructions: "Focus on medicine; answer in English." });
+const chunks = [...(await rag.search(question)), ...(await rag.search(broad))];
+```
+
+Options: `instructions` (appended to the default prompt), `prompt` (replaces the
+whole prompt; include the question), `params` and `signal`. It never returns an
+empty string: without valid structured output it uses the raw text and, as a
+last resort, the original question.
+
+## Ready-made tools (`jangada-ai/prebuilt`)
+
+The subpath ships ready-made tools to pass in the `tools` of an `Agent` or of
+`complete()`. Each one exists as a `Tool` (`Tool` suffix, snake_case name for the
+model, same as Python) and as an async function to call directly.
+
+```ts
+import { brTools, calculatorTool, currentDatetimeTool, fetchUrlTool } from "jangada-ai/prebuilt";
+
+const assistant = new Agent(llm, {
+  role: "Assistant",
+  tools: [calculatorTool, currentDatetimeTool, fetchUrlTool, ...brTools],
+});
+```
+
+| Tool | Key |
+| --- | --- |
+| `calculatorTool`, `currentDatetimeTool` | none |
+| `fetchUrlTool`, `httpRequestTool` (public hosts only, up to 5 MB) | none |
+| `wikipediaSearchTool` | none |
+| `tavilySearchTool` / `tavilyTool({ apiKey })` | `TAVILY_API_KEY` |
+| `braveSearchTool` / `braveTool({ apiKey })` | `BRAVE_API_KEY` |
+| `openweatherTool` / `weatherTool({ apiKey })` | `OPENWEATHER_API_KEY` |
+| `brTools`: `validarCpfTool`, `validarCnpjTool`, `validarDocumentoTool`, `consultarCepTool`, `consultarCnpjTool`, `consultarBancoTool`, `feriadosNacionaisTool`, `consultarDddTool`, `taxasJurosTool` | none (BrasilAPI, Brazil-specific) |
+
+Network or API failures come back as text for the model. Only a missing key
+throws `Error`. The factories that take `apiKey` are for edge runtimes, where
+there are no environment variables.

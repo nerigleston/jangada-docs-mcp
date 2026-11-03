@@ -1,0 +1,109 @@
+---
+title: "Differences from Python"
+description: "What changes between the npm jangada-ai and the Python lib: async, schemas, camelCase names, subpaths, file reading, time units and per-provider differences."
+---
+
+The npm package `jangada-ai` follows the behavior of the Python lib: same
+providers, same retry and fallback policy, same usage contract, same price table.
+Behavior that differs from Python is treated as a bug, except for the
+differences listed here, which exist because of the runtime or JavaScript
+conventions.
+
+## Language and API
+
+| Topic | Python | JavaScript / TypeScript |
+| --- | --- | --- |
+| Sync and async | `complete` and `acomplete`, `stream` and `astream` | async only: `complete` returns a `Promise`, `stream` returns an `AsyncIterable` |
+| Names | snake_case (`max_tokens`, `tool_calls`, `with_fallback`) | camelCase (`maxTokens`, `toolCalls`, `withFallback`) |
+| Options | kwargs (`complete(p, images=[...])`) | object as the last argument (`complete(p, { images: [...] })`) |
+| Template variables | `complete(prompt, name="Ana")` | `complete(prompt, { variables: { name: "Ana" } })` |
+| Template with an object | `str(value)` | objects and arrays become JSON |
+| Structured output | Pydantic class | Zod, Standard Schema (Valibot, ArkType) or `jsonSchema()` |
+| Tools | a function becomes a tool through its signature | `tool({ name, parameters, execute })` |
+| Bytes | `bytes` | `Uint8Array` |
+| Cancellation | none | `signal?: AbortSignal` on every network call |
+| Time | seconds (`backoff_base`, `ttl`, `poll_interval`) | milliseconds (`backoffBaseMs`, `ttlMs`, `pollIntervalMs`, `timeoutMs`) |
+| Usage | `input_tokens`, `cache_read_tokens` | `inputTokens`, `cacheReadTokens` (the observability payload converts them) |
+| `Graph` | `graph.then(a, b)` | `graph.connect(a, b)` (a `then` method would break `await graph`) |
+| `Flow`/`Graph` context | `run(**ctx)`, with reserved names | `run(ctx)`, a separate object, no reserved names |
+| Parallel branches with a failure | cancels the asyncio tasks | cancels the branches through `AbortSignal` |
+| Closing clients | `close()`/`aclose()` and `with LLM(...)` | `await llm.close()` or `await using llm = new LLM(...)` |
+
+## Package and runtime
+
+The core runs on Node 22+, Bun, Deno and edge (Cloudflare Workers, Vercel Edge),
+so it does not touch the disk. What depends on Node lives in subpaths.
+
+| Import | Contents |
+| --- | --- |
+| `jangada-ai` | `LLM`, errors, prices, cache, guardrails, vision, documents, `Flow`, `Graph`, `Agent`, `Squad`, observability, prompts |
+| `jangada-ai/node` | `.env`, `readImage`, `readAudio`, `readDocument`, `runInSession`, `serveMcp`, `serveA2a` |
+| `jangada-ai/mcp` | MCP client and server, Code Mode |
+| `jangada-ai/rag` | `RAG`, chunking, rerank, stores |
+| `jangada-ai/eval` | `Dataset`, `Evaluator`, `evaluate` |
+| `jangada-ai/prebuilt` | ready-made tools |
+| `jangada-ai/a2a` | web-standard A2A server |
+
+| Topic | Python | JavaScript / TypeScript |
+| --- | --- | --- |
+| `.env` | loaded on `import jangada_ai` | loaded on `import "jangada-ai/node"` or with `loadEnv()`; turn off with `JANGADA_NO_DOTENV=1` |
+| Image from disk | `images=["photo.jpg"]`, `Image.from_path` | `readImage("photo.jpg")`; in the core, `ImagePart`, data URI or URL |
+| Audio from disk | `transcribe("audio.mp3")` | `transcribe(await readAudio("audio.mp3"))` |
+| Document from disk | `files=["a.pdf"]`, `Document("a.pdf")` | `readDocument("a.pdf")` or `new Document(bytes, { name })` |
+| Document dependencies | `pypdf`, `python-docx`, `openpyxl` (`[files]` extra) | `unpdf`, `mammoth`, `exceljs`; `@napi-rs/canvas` for PDF through vision |
+| `Dataset.from_jsonl` | file path | `Dataset.fromJsonl(text)` |
+| Mistral OCR | accepts a path | bytes, URL or data URI only (a path throws `UnsupportedError`) |
+| Price catalog cache | disk (`~/.cache/jangada`), 1-day TTL | memory, 1-day TTL per process |
+| SDKs | pip extras | optional `peerDependencies`, loaded with `import()` only when the provider is used |
+
+## Observability and prompts
+
+| Topic | Python | JavaScript / TypeScript |
+| --- | --- | --- |
+| Session | `with observability_session(...) as trace_id` | `observabilitySession()` passed in `{ trace }`, or `runInSession(opts, fn)` from `jangada-ai/node` |
+| Flush at exit | `atexit` | `beforeExit` with `jangada-ai/node`; in serverless, `await flushObservability()` |
+| Prompt used in the trace | `with p.use():` | `{ trace: p.trace() }` |
+| MCP request context | `ContextVar` | 2nd argument of `execute` (`ctx`) and `AsyncLocalStorage` when available |
+
+## Errors, cache and guardrails
+
+| Topic | Python | JavaScript / TypeScript |
+| --- | --- | --- |
+| `classify` | HTTP status and class name | also Node network `cause.code` (`ECONNRESET`, `UND_ERR_CONNECT_TIMEOUT`...) |
+| `SemanticCache` | optional `store` (RAG vector store) | in-memory search, no `store` |
+| Custom guardrail | `check_input` and `acheck_input`, `GuardResult(ok, reason)` | `async checkInput` only, returns `{ ok, reason }` |
+| Judge reentrancy | `ContextVar` | a marker on the judge's own call (works in any runtime) |
+| `detectObjects` | accepts a path; JSON outside the schema may become `OutputValidationError` | `ImagePart` only; reading is always lenient (invalid boxes are dropped) |
+
+## Providers
+
+| Topic | Python | JavaScript / TypeScript |
+| --- | --- | --- |
+| Groq | `groq` SDK | `openai` SDK with the Groq URL |
+| Ollama | `ollama` SDK | direct `fetch` to the native API (runs on edge) |
+| Gemini, structured output | `response_schema` (Pydantic) | `responseJsonSchema` (JSON Schema) |
+| Gemini, profiles and extras | `thinking_budget`, `top_p` | `thinkingBudget`, `topP` (`@google/genai` vocabulary) |
+| Gemini, embeddings | `embed(..., output_dimensionality=768)` | `embed(texts, { outputDimensionality: 768 })` |
+| Gemini with MCP | SDK AFC; usage from the last response only | jangada's loop; usage summed across rounds |
+| Gemini Interactions | `poll_interval`/`timeout` in seconds, sync and async | `pollIntervalMs`/`timeoutMs`, async only, `signal` cancels polling |
+| Mistral `parse` | `chat.parse` with Pydantic | strict json_schema `responseFormat` |
+| Mistral stream with native tools | `UnsupportedError` | regular Conversations API call, text in one piece |
+| Mistral `toolChoice` by name (Conversations API) | accepted | `UnsupportedError` (the JS SDK only accepts auto, none, any, required) |
+| Cohere and Voyage rerank | SDKs | direct HTTP API |
+| RAG BM25 | `rank_bm25` | own implementation, same formula |
+| pgvector | one psycopg connection | `pg` `Pool` (injectable), same advisory lock as Python |
+
+## MCP and A2A
+
+| Topic | Python | JavaScript / TypeScript |
+| --- | --- | --- |
+| Code Mode | Python in the Monty sandbox | JavaScript in QuickJS (`quickjs-emscripten`); only `return` yields a value |
+| MCP server HTTP app | Starlette ASGI | web-standard `Request => Response` handler (Node, Bun, Deno, Workers, Hono, Next) |
+| `serve_mcp` | blocks | `serveMcp()` returns `{ url, port, close() }` |
+| `authToken` and `OPTIONS` | 401 on the preflight too | `OPTIONS` passes without a token (browser clients) |
+| `keepAlive` and HTTP 404 | 4xx does not reconnect | 404 reconnects (expired session, per the spec) |
+| SSRF in the ready-made tools | resolves DNS and checks each IP | checks the literal host; `setResolveHost` turns on DNS checking |
+| A2A | `build_a2a_app` (Starlette) | web-standard `buildA2aHandler` or `serveA2a` from `jangada-ai/node`; TTLs in ms |
+
+Related: [Getting started](/en/docs/js/getting-started), [Providers](/en/docs/js/providers),
+[Python lib docs](/en/docs).
