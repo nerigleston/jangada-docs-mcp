@@ -1,6 +1,6 @@
 ---
 title: "JavaScript / TypeScript"
-description: "A jangada no npm (jangada-ai): mesma ideia da lib Python, em JavaScript e TypeScript. Instalação, primeira chamada, structured output, tools, streaming e diferenças em relação ao Python."
+description: "A jangada no npm (jangada-ai): mesma ideia da lib Python, em JavaScript e TypeScript. Instalação, providers, structured output, tools, agentes, MCP, RAG, A2A, eval e diferenças em relação ao Python."
 ---
 
 A jangada também existe para JavaScript e TypeScript, no pacote npm
@@ -13,9 +13,9 @@ O código-fonte é TypeScript, mas o pacote publicado é JavaScript (ESM e
 CommonJS) com os tipos (`.d.ts`) junto. Funciona em projeto JS puro; em TS você
 ganha autocompletar e checagem de tipos.
 
-> Versão atual: **0.1.0**. Traz o núcleo e 8 providers. MCP, agentes, RAG,
-> observability e o resto chegam nas próximas versões (ver
-> [O que já existe](#o-que-já-existe)).
+> Versão atual: **1.0.2**, com paridade com a lib Python: 11 providers, tools,
+> MCP, agentes, RAG, eval, A2A, guardrails, cache e observability (ver
+> [O que vem no pacote](#o-que-vem-no-pacote)).
 
 ## Instalação
 
@@ -31,8 +31,14 @@ funciona sem nenhum deles.
 | --- | --- |
 | `openai`, `azure`, `groq`, `openrouter`, `deepseek` | `npm install openai` |
 | `anthropic` | `npm install @anthropic-ai/sdk` |
-| `gemini`, `vertex` | `npm install @google/genai` |
+| `gemini`, `vertex`, `GeminiInteractions` | `npm install @google/genai` (Interactions exige 1.33+) |
+| `bedrock` | `npm install @aws-sdk/client-bedrock-runtime` |
+| `mistral` | `npm install @mistralai/mistralai` |
+| `ollama` | nada (fala HTTP direto com o servidor) |
 | structured output com Zod | `npm install zod` |
+| PDF, DOCX e XLSX no prompt | `npm install unpdf mammoth exceljs` (PDF como imagem: `@napi-rs/canvas`) |
+| MCP (cliente e servidor) | `npm install @modelcontextprotocol/sdk` (Code Mode: `quickjs-emscripten`) |
+| RAG no Postgres / MongoDB | `npm install pg` / `npm install mongodb` |
 
 Roda em Node 22 ou mais novo, Bun, Deno e runtimes edge (Cloudflare Workers,
 Vercel Edge). O núcleo não usa o sistema de arquivos. Ler arquivo e `.env` fica
@@ -126,8 +132,9 @@ for (const call of comp.toolCalls) {
 ```
 
 Tools nativas, que o provider executa: `webSearch()`, `webFetch()`,
-`codeExecution()`, `fileSearch()`, `googleMaps()`, `computerUse()`. Na 0.1.0
-funcionam no Anthropic e no Gemini.
+`codeExecution()`, `fileSearch()`, `googleMaps()`, `computerUse()`. Funcionam
+na OpenAI e Azure (Responses API), Anthropic, Gemini, Groq, Bedrock e Mistral,
+cada um com o que o provider oferece.
 
 ## Streaming
 
@@ -151,6 +158,68 @@ await llm.complete("E esta?", { images: ["https://exemplo.com/foto.png"] });
 
 No núcleo (edge), passe `Image.fromBytes(...)`, uma data URI ou uma URL.
 
+## Agentes
+
+```js
+import { Agent, Squad, tool } from "jangada-ai";
+
+const atendente = new Agent(llm, { role: "Atendente", tools: [clima] });
+const r = await atendente.run("Qual o clima em Recife?");
+console.log(r.text, r.cost, r.toolTrace);
+
+const pesquisador = new Agent(llm, { role: "Pesquisador", goal: "listar fatos curtos" });
+const redator = new Agent(llm, { role: "Redator", goal: "escrever uma frase" });
+await new Squad([pesquisador, redator]).run("jangadas no Ceará");
+```
+
+`Flow` e `Graph` também existem. No `Graph`, a ligação entre nós é `connect()`
+(no Python é `then()`, que em JS tornaria o objeto "thenable").
+
+## MCP
+
+```js
+import { MCPClient, runAgent } from "jangada-ai/mcp";
+import { serveMcp } from "jangada-ai/node";
+
+// servir tools da jangada como servidor MCP
+const srv = await serveMcp([clima], { transport: "http", port: 3333 });
+
+// consumir um servidor MCP
+await using mcp = await new MCPClient({ url: "https://meu-mcp/mcp" }).connect();
+const r = await runAgent(llm, "Use as tools do servidor.", { client: mcp });
+```
+
+`await using` fecha a conexão no fim do bloco. Quem conecta é o `connect()`.
+
+## RAG
+
+```js
+import { RAG, vectorStore } from "jangada-ai/rag";
+
+const store = vectorStore(process.env.DATABASE_URL); // postgresql://, mongodb:// ou "memory"
+const rag = new RAG(new LLM("openai", "text-embedding-3-small"), store, { chat: llm });
+await rag.syncTexts(["A padaria abre às 6h.", "Aceitamos PIX."], { documentId: "faq" });
+const resposta = await rag.ask("Como posso pagar?");
+```
+
+O esquema no Postgres e no MongoDB é o mesmo da lib Python, inclusive o hash dos
+chunks e o lock da indexação incremental. Python e JS podem usar o mesmo banco.
+
+## A2A e eval
+
+```js
+import { serveA2a } from "jangada-ai/node";
+await serveA2a(atendente, { port: 4000 }); // Agent Card em /.well-known/agent-card.json
+
+import { Dataset, Evaluator, evaluate } from "jangada-ai/eval";
+const res = await evaluate(dataset, (ex) => llm.complete(ex.inputs.q), [
+  Evaluator.fn("exato", (saida, ref) => saida.text.trim() === ref),
+]);
+```
+
+Em edge, use `buildA2aHandler` de `jangada-ai/a2a`: ele devolve um handler
+`(Request) => Promise<Response>`.
+
 ## Diferenças em relação ao Python
 
 | Tema | Python | JavaScript / TypeScript |
@@ -162,17 +231,23 @@ No núcleo (edge), passe `Image.fromBytes(...)`, uma data URI ou uma URL.
 | Tools | função Python vira tool pela assinatura | `tool({ name, parameters, execute })` |
 | `.env` | carregado no `import jangada_ai` | carregado no `import "jangada-ai/node"` |
 | Cancelamento | não tem | `signal` em todas as chamadas |
-| Backoff | segundos | milissegundos (`backoffBaseMs`) |
+| Backoff, TTL e polling | segundos | milissegundos (`backoffBaseMs`, `pollIntervalMs`) |
+| `Graph` | `then()` | `connect()` |
+| A2A | app Starlette | handler `Request => Response` (`buildA2aHandler`) ou `serveA2a` |
+| Arquivos do disco | `Document("arq.pdf")` | `readDocument("arq.pdf")` de `jangada-ai/node` |
 
-## O que já existe
+## O que vem no pacote
 
-Na 0.1.0: `LLM` (`complete`, `parse`, `stream`, `streamComplete`), templates,
-retry e fallback, erros normalizados, custo por resposta (mesma tabela de preços
-da lib Python), profiles por modelo, debug, tools, tools nativas no Anthropic e
-no Gemini, vision e os providers OpenAI, Azure OpenAI, Groq, OpenRouter,
-DeepSeek, Anthropic, Gemini e Vertex.
+| Import | O que tem |
+| --- | --- |
+| `jangada-ai` | `LLM` (`complete`, `parse`, `stream`, `streamComplete`, `embed`, `transcribe`), templates, retry e fallback, erros normalizados, custo por resposta, profiles, tools e tools nativas, vision e documentos, cache exato e semântico, guardrails, `Flow`, `Graph`, `Agent`, `Squad`, `stepBack`, `plan`, `detectObjects`, `GeminiInteractions`, observability e prompt registry |
+| `jangada-ai/node` | ler arquivo e `.env`, `runInSession`, `serveMcp`, `serveA2a` |
+| `jangada-ai/mcp` | `MCPClient`, `runAgent`, servidor MCP e Code Mode |
+| `jangada-ai/rag` | `RAG`, chunking (inclusive semântico), rerank, stores em memória, pgvector e MongoDB |
+| `jangada-ai/eval` | `Dataset`, `Evaluator`, `evaluate` |
+| `jangada-ai/prebuilt` | tools prontas: calculadora, CPF/CNPJ, CEP, Wikipedia, busca web, clima, HTTP |
+| `jangada-ai/a2a` | servidor A2A web-standard |
 
-Ainda não: tools nativas na OpenAI/Azure (Responses API), transcrição,
-embeddings, OCR, cache, `Flow`/`Graph`, MCP, agentes, guardrails,
-observability, RAG, eval, A2A, Bedrock, Mistral e Ollama. Esses chegam por fases,
-até a paridade com a lib Python.
+Providers: OpenAI, Azure OpenAI, Groq, OpenRouter, DeepSeek, Anthropic, Gemini,
+Vertex, Bedrock, Mistral e Ollama. As diferenças assumidas em relação ao Python
+estão na tabela acima.
