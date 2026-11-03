@@ -7,24 +7,29 @@ A jangada traz duas formas de encadear chamadas, ambas agregando `usage`/`cost`.
 
 ## Flow — sequencial
 
-`Flow` encadeia `Step`s: a saída de um vira entrada do próximo.
+`Flow` encadeia passos: a saída de um vira variável do próximo.
 
 ```python
-from jangada_ai import LLM, Flow, Step
+from jangada_ai import LLM, Flow
 
 llm = LLM("openai", "gpt-4o-mini")
 
-flow = Flow([
-    Step("rascunho", "Escreva um parágrafo sobre {{tema}}."),
-    Step("revisao",  "Revise e melhore:\n{{rascunho}}"),
-])
+flow = (
+    Flow(llm)  # LLM padrão dos passos
+    .step("rascunho", "Escreva um parágrafo sobre {{tema}}.")
+    .step("revisao", "Revise e melhore:\n{{rascunho}}")
+)
 
-resultado = flow.run(llm, tema="jangadas do Nordeste")
-print(resultado.output)     # saída do último step
-print(resultado.cost)       # custo agregado de toda a cadeia
+res = flow.run(tema="jangadas do Nordeste")   # async: await flow.arun(...)
+print(res["revisao"])   # saída de um passo pelo nome
+print(res.last)         # saída do último passo
+print(res.cost)         # custo agregado de toda a cadeia
 ```
 
-Cada `Step` referencia as saídas anteriores pelo nome via template `{{ }}`.
+Cada passo referencia as saídas anteriores pelo nome via template `{{ }}`.
+`step()` aceita ainda `system=`, `llm=` (outro modelo só naquele passo),
+`output=` (nome da variável, se diferente do passo) e `schema=` (usa `parse()`;
+leia com `res.parsed("passo")`).
 
 ## Graph — roteamento condicional + paralelo
 
@@ -32,14 +37,38 @@ Cada `Step` referencia as saídas anteriores pelo nome via template `{{ }}`.
 (core async), juntando os resultados.
 
 ```python
-from jangada_ai import Graph
+from jangada_ai import LLM, Graph
 
-# roteamento condicional: escolhe o próximo nó conforme a saída
-# paralelo + junção: dispara vários nós e combina as respostas
+rapido = LLM("groq", "openai/gpt-oss-20b")
+forte = LLM("anthropic", "claude-sonnet-4-5")
+
 g = Graph()
-# ... defina nós, arestas condicionais e junções ...
-res = g.run(...)        # GraphResult agrega usage/cost
+g.node("triagem", rapido, "Responda só 'tecnico' ou 'geral': {{pergunta}}")
+g.node("tecnico", forte, "Responda tecnicamente: {{pergunta}}")
+g.node("geral", rapido, "Responda de forma simples: {{pergunta}}")
+# roteamento condicional: o router recebe o contexto e devolve o próximo nó (ou None)
+g.route("triagem", lambda ctx: "tecnico" if "tecnico" in ctx["triagem"].lower() else "geral")
+
+res = g.run("triagem", pergunta="como funciona o handshake TCP?")  # async: await g.arun(...)
+print(res.path)               # ex.: ['triagem', 'tecnico']
+print(res[res.path[-1]])      # saída do último nó
+print(res.cost)               # GraphResult agrega usage/cost
+
+# paralelo + junção: os ramos rodam ao mesmo tempo e o join lê cada um pelo nome
+g2 = Graph()
+g2.parallel(
+    "pesquisas",
+    {
+        "mercado": (rapido, "Analise o mercado de: {{tema}}"),
+        "tecnica": (forte, "Analise a viabilidade técnica de: {{tema}}"),
+    },
+    join="sintese",
+)
+g2.node("sintese", forte, "Combine:\nMercado: {{mercado}}\nTécnica: {{tecnica}}")
+print(g2.run("pesquisas", tema="app de corrida com IA")["sintese"])
 ```
+
+Para encadear nós sem condição, use `g.then("a", "b")`.
 
 Veja os exemplos executáveis em
 `examples/graph_example.py`.

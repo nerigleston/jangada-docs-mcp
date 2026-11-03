@@ -60,6 +60,7 @@ A recusa vem como um `Completion` normal (`comp.text == message`), com
 | `instruction` | Sobrescreve a instrução do classificador. |
 | `raise_on_block` | `True` levanta `GuardrailError` em vez de recusar. |
 | `fail_closed` | Se o judge falhar/for inconclusivo: `True` barra (seguro), `False` (padrão) libera. |
+| `check_history` | `False` (padrão) checa só o que chegou depois da última fala do assistant; `True` rejulga o histórico inteiro a cada chamada. |
 
 ## Recomendações
 

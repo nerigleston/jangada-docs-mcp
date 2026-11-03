@@ -60,6 +60,7 @@ The refusal comes back as a normal `Completion` (`comp.text == message`), with
 | `instruction` | Overrides the classifier instruction. |
 | `raise_on_block` | `True` raises `GuardrailError` instead of refusing. |
 | `fail_closed` | If the judge fails/is inconclusive: `True` blocks (safe), `False` (default) allows. |
+| `check_history` | `False` (default) checks only what arrived after the last assistant turn; `True` re-judges the whole history on every call. |
 
 ## Recommendations
 

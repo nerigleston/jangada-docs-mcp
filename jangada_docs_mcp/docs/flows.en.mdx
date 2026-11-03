@@ -7,24 +7,29 @@ Jangada provides two ways to chain calls, both aggregating `usage`/`cost`.
 
 ## Flow — sequential
 
-`Flow` chains `Step`s: the output of one becomes the input of the next.
+`Flow` chains steps: the output of one becomes a variable of the next.
 
 ```python
-from jangada_ai import LLM, Flow, Step
+from jangada_ai import LLM, Flow
 
 llm = LLM("openai", "gpt-4o-mini")
 
-flow = Flow([
-    Step("draft",  "Write a paragraph about {{topic}}."),
-    Step("review", "Review and improve:\n{{draft}}"),
-])
+flow = (
+    Flow(llm)  # default LLM for the steps
+    .step("draft", "Write a paragraph about {{topic}}.")
+    .step("review", "Review and improve:\n{{draft}}")
+)
 
-result = flow.run(llm, topic="jangadas of the Northeast")
-print(result.output)     # output of the last step
-print(result.cost)       # aggregated cost of the whole chain
+res = flow.run(topic="jangadas of the Northeast")   # async: await flow.arun(...)
+print(res["review"])   # a step's output by name
+print(res.last)        # output of the last step
+print(res.cost)        # aggregated cost of the whole chain
 ```
 
-Each `Step` references previous outputs by name via the `{{ }}` template.
+Each step references previous outputs by name via the `{{ }}` template.
+`step()` also takes `system=`, `llm=` (another model for that step only),
+`output=` (variable name, if different from the step) and `schema=` (uses
+`parse()`; read it with `res.parsed("step")`).
 
 ## Graph — conditional routing + parallel
 
@@ -32,14 +37,38 @@ Each `Step` references previous outputs by name via the `{{ }}` template.
 (async core), joining the results.
 
 ```python
-from jangada_ai import Graph
+from jangada_ai import LLM, Graph
 
-# conditional routing: choose the next node based on the output
-# parallel + join: fire several nodes and combine the responses
+fast = LLM("groq", "openai/gpt-oss-20b")
+strong = LLM("anthropic", "claude-sonnet-4-5")
+
 g = Graph()
-# ... define nodes, conditional edges, and joins ...
-res = g.run(...)        # GraphResult aggregates usage/cost
+g.node("triage", fast, "Answer only 'technical' or 'general': {{question}}")
+g.node("technical", strong, "Answer technically: {{question}}")
+g.node("general", fast, "Answer simply: {{question}}")
+# conditional routing: the router gets the context and returns the next node (or None)
+g.route("triage", lambda ctx: "technical" if "technical" in ctx["triage"].lower() else "general")
+
+res = g.run("triage", question="how does the TCP handshake work?")  # async: await g.arun(...)
+print(res.path)               # e.g. ['triage', 'technical']
+print(res[res.path[-1]])      # output of the last node
+print(res.cost)               # GraphResult aggregates usage/cost
+
+# parallel + join: branches run at the same time and the join reads each by name
+g2 = Graph()
+g2.parallel(
+    "research",
+    {
+        "market": (fast, "Analyze the market for: {{topic}}"),
+        "tech": (strong, "Analyze the technical feasibility of: {{topic}}"),
+    },
+    join="synthesis",
+)
+g2.node("synthesis", strong, "Combine:\nMarket: {{market}}\nTech: {{tech}}")
+print(g2.run("research", topic="AI running app")["synthesis"])
 ```
+
+To chain nodes unconditionally, use `g.then("a", "b")`.
 
 See the runnable examples in `examples/graph_example.py`.
 
