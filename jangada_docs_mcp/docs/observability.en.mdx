@@ -154,7 +154,10 @@ and become a regression case in [evals](/docs/eval).
 ## What is captured
 
 From each call: `provider`, `model`, `promptTokens`/`completionTokens` (from
-`usage`), `costUsd` (from `cost`), latency, the **input** (messages or embedding
+`usage`), the breakdown `reasoningTokens` (reasoning/thinking, part of the
+output), `cacheReadTokens`/`cacheWriteTokens` (prompt cache, part of the input)
+and `serverToolRequests` (native tools such as `web_search`), `costUsd` (from
+`cost`), latency, the **input** (messages or embedding
 texts; very long content is truncated), the **output** (response text, or vector
 count/dimensions), and the **tool calls** the model requested (`tools`: id/name/args).
 
@@ -169,6 +172,29 @@ Each observation has a **status**: `OK`, or **`INCOMPLETE`** when the response w
 cut off by the token limit (`finish_reason == "length"`), along with the
 normalized stop reason in **`finishReason`**. In the dashboard it becomes a badge
 (amber) and is part of the status filter.
+
+## Server-side cost
+
+The dashboard does not depend on the price the SDK knew at call time. On
+ingestion, the backend recomputes each observation's cost from its tokens using
+the current price catalog (the same `prices.json` published at `jangada.dev.br`),
+the way LangSmith does:
+
+- **Reasoning is billed.** Thinking models (Gemini 3.x, Claude with thinking,
+  o-series/GPT-5) charge reasoning tokens at the output price. They arrive in
+  `reasoningTokens` and are already included in `completionTokens`.
+- **Discounted cache.** `cacheReadTokens`/`cacheWriteTokens` are charged at the
+  model's cache price.
+- **Per-part breakdown.** Each observation stores the input cost, the output cost
+  and the reasoning share. Analytics shows the cost composition and how much of it
+  is reasoning, per model and per day.
+- **Model unknown to the SDK.** If the SDK sent an empty `costUsd` (a new model its
+  local table did not have yet), the server fills it in. When the server does not
+  know the model either, the SDK's `costUsd` is kept and flagged as an estimate.
+
+The SDK can only send reasoning if it knows how to count it: for Gemini, that
+exists since 1.9.0. Older versions send only the answer tokens, and the cost shows
+up below what the provider bills. Upgrade with `pip install -U jangada-ai`.
 
 ## Capabilities
 
@@ -192,7 +218,9 @@ At [app.jangada.dev.br](https://app.jangada.dev.br) you track everything:
 - **Traces and detail** — each batch and its observations (provider, model,
   tokens, cost, latency, tool calls and capabilities), as a table or waterfall.
 - **Analytics** — cost, calls, tokens, error rate and latency (p50/p95/p99),
-  broken down by model, provider and capability, plus a daily time series.
+  broken down by model, provider and capability, plus a daily time series. Cost
+  is split into input, output and reasoning, and daily tokens separate input,
+  output and reasoning.
 - **Filters and export** — filter by model, provider, errors, dates,
   userId/sessionId, minimum cost and capability; export to CSV/JSON.
 - **Live tail** — traces in real time, with pause/resume.
