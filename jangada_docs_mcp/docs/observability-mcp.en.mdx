@@ -93,7 +93,7 @@ the dashboard. It is shown only once; revoke it when no longer needed.
 | `anomalias` | Last hour error rate, last 24 h p95 latency and today's cost, compared with the 7-day average |
 | `listar_traces` | Traces with the Traces tab filters (model, provider, status, user, session, capability, period), paginated |
 | `totais_traces` | Totals for **every** trace in the filter, without pagination, broken down by day (the period's financial summary) |
-| `detalhe_trace` | Each call of a trace: model, tokens, cost, latency, error and scores. Input and output only if the organization allows it |
+| `detalhe_trace` | Each call of a trace (`trace_id`) or of up to 50 at once (`trace_ids`): model, tokens, cost, latency, error and scores. Input and output only if the organization allows it |
 | `custo_por_usuario` | Cost ranking per end user (the `user_id` your app sends to jangada) |
 
 The tools take `projeto` (name or id). With several organizations in the connection, use

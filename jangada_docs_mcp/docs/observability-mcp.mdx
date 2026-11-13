@@ -94,7 +94,7 @@ no dashboard. Ele aparece uma vez só; revogue quando não usar mais.
 | `anomalias` | Taxa de erro da última hora, latência p95 das últimas 24 h e custo de hoje, comparados com a média de 7 dias |
 | `listar_traces` | Traces com os filtros da aba Traces (modelo, provider, status, usuário, sessão, capacidade, período), paginados |
 | `totais_traces` | Totais de **todos** os traces do filtro, sem paginação, com a quebra por dia (o resumo financeiro do período) |
-| `detalhe_trace` | Cada chamada de um trace: modelo, tokens, custo, latência, erro e notas. Input e output só se a organização liberar |
+| `detalhe_trace` | Cada chamada de um trace (`trace_id`) ou de até 50 numa vez (`trace_ids`): modelo, tokens, custo, latência, erro e notas. Input e output só se a organização liberar |
 | `custo_por_usuario` | Ranking de custo por usuário final (o `user_id` que o seu app manda à jangada) |
 
 As ferramentas recebem `projeto` (nome ou id). Com várias organizações na conexão, use
