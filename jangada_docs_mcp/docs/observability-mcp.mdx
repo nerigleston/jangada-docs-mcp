@@ -105,6 +105,18 @@ usado sozinho. Os períodos aceitam `dias` (janela até agora) ou `de`/`ate` em 
 O custo em reais usa a PTAX de venda do Banco Central do **dia de cada chamada**
 (horário de Brasília), igual ao dashboard.
 
+### Code Mode
+
+O servidor roda em [Code Mode](/docs/mcp): no Claude ou no ChatGPT, em vez das 7
+ferramentas, aparecem `search`, `get_schema` e `execute`. O assistente acha a
+ferramenta, vê os parâmetros e escreve um trecho de Python que chama várias delas de uma
+vez, num sandbox sem rede nem disco. Uma pergunta como "quanto gastei somando todas as
+organizações este mês?" vira um `execute` só, com uma aprovação, em vez de uma chamada
+por projeto.
+
+As regras de cada organização valem dentro do Code Mode também: uma ferramenta
+desligada não aparece no `search` e é recusada se o código tentar chamá-la.
+
 ## Configurar por organização
 
 No dashboard, o menu **MCP** da sidebar controla o acesso de cada organização:

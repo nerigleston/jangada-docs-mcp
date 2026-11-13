@@ -104,6 +104,18 @@ Tool and parameter names are in Portuguese, like the rest of the platform.
 The BRL cost uses the Central Bank of Brazil PTAX selling rate of **each call's day**
 (Brasília time), same as the dashboard.
 
+### Code Mode
+
+The server runs in [Code Mode](/docs/mcp): in Claude or ChatGPT, instead of the 7 tools
+you see `search`, `get_schema` and `execute`. The assistant finds the tool, reads its
+parameters and writes a Python snippet that calls several of them at once, in a sandbox
+with no network or disk. A question like "how much did I spend across all
+organizations this month?" becomes a single `execute`, with one approval, instead of one
+call per project.
+
+Each organization's rules apply inside Code Mode too: a disabled tool doesn't show up in
+`search` and is refused if the code tries to call it.
+
 ## Configure per organization
 
 In the dashboard, the **MCP** sidebar menu controls each organization's access:
