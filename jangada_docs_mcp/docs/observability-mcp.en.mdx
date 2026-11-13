@@ -20,7 +20,9 @@ https://observability.mcp.jangada.dev.br/mcp
 ```
 
 Sign-in uses your Jangada AI account (the same one as `app.jangada.dev.br`). When
-authorizing, you choose **which organization** the app will read.
+authorizing, you choose **which organizations** the app will read. The default is **all
+your organizations**, including the ones you join later. Each one keeps its own rules:
+the app only uses the tools and projects it enabled.
 
 ## Connect
 
@@ -28,7 +30,7 @@ authorizing, you choose **which organization** the app will read.
 
 1. Open **Settings › Connectors** and click **Add custom connector**.
 2. Give it a name (e.g. *Jangada Observability*) and paste the URL above.
-3. Click **Connect**. The Jangada AI sign-in opens: sign in, pick the organization and authorize.
+3. Click **Connect**. The Jangada AI sign-in opens: sign in, pick the organizations and authorize.
 4. In a chat, enable the connector in the tools menu and ask your question.
 
 On Team and Enterprise plans, a Claude admin adds the connector for the team and each
@@ -39,7 +41,7 @@ person signs in.
 1. Open **Settings › Apps & Connectors › Advanced settings** and turn on **Developer mode**.
 2. Go back to **Apps & Connectors** and click **Create**.
 3. Fill in the name, paste the URL above and keep authentication as **OAuth**.
-4. Click **Connect**, sign in with your Jangada AI account and pick the organization.
+4. Click **Connect**, sign in with your Jangada AI account and pick the organizations.
 5. In a chat, pick the connector under **+ › More**.
 
 Developer mode is available on Plus, Pro, Business, Enterprise and Edu. Menu names may
@@ -94,7 +96,8 @@ the dashboard. It is shown only once; revoke it when no longer needed.
 | `detalhe_trace` | Each call of a trace: model, tokens, cost, latency, error and scores. Input and output only if the organization allows it |
 | `custo_por_usuario` | Cost ranking per end user (the `user_id` your app sends to jangada) |
 
-The tools take `projeto` (name or id). With a single enabled project, it is used
+The tools take `projeto` (name or id). With several organizations in the connection, use
+`"Org / Project"` when names repeat. With a single enabled project, it is used
 automatically. Periods take `dias` (window up to now) or `de`/`ate` in ISO (`2026-09-01`).
 Tool and parameter names are in Portuguese, like the rest of the platform.
 
@@ -112,7 +115,8 @@ In the dashboard, the **MCP** sidebar menu controls each organization's access:
 - **Call input and output.** When on, `detalhe_trace` returns the messages sent to and
   received from the model.
 - **Connections.** Who connected, from which app and when it was last used, with a
-  revoke button.
+  revoke button. Revoking on one organization's page removes only that organization
+  from the connection; if it covers others, it keeps working there.
 - **Static tokens.** Create and revoke.
 
 By default the MCP is **on in every organization, with every tool**, and call

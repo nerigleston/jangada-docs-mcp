@@ -20,7 +20,9 @@ https://observability.mcp.jangada.dev.br/mcp
 ```
 
 O login é com a sua conta do Jangada AI (a mesma do `app.jangada.dev.br`). Ao autorizar,
-você escolhe **qual organização** o app vai ler.
+você escolhe **quais organizações** o app vai ler. O padrão é **todas as suas
+organizações**, inclusive as que você entrar depois. Cada uma continua com as próprias
+regras: o app só usa as ferramentas e os projetos que ela liberou.
 
 ## Conectar
 
@@ -28,7 +30,7 @@ você escolhe **qual organização** o app vai ler.
 
 1. Abra **Configurações › Conectores** e clique em **Adicionar conector personalizado**.
 2. Dê um nome (ex.: *Jangada Observability*) e cole a URL acima.
-3. Clique em **Conectar**. Abre o login do Jangada AI: entre, escolha a organização e autorize.
+3. Clique em **Conectar**. Abre o login do Jangada AI: entre, escolha as organizações e autorize.
 4. Numa conversa, ative o conector no menu de ferramentas e faça a pergunta.
 
 Nos planos Team e Enterprise, um admin do Claude adiciona o conector para a equipe e
@@ -40,7 +42,7 @@ cada pessoa faz o próprio login.
    **Modo desenvolvedor**.
 2. Volte em **Apps e conectores** e clique em **Criar**.
 3. Preencha o nome, cole a URL acima e deixe a autenticação em **OAuth**.
-4. Clique em **Conectar**, entre com a conta do Jangada AI e escolha a organização.
+4. Clique em **Conectar**, entre com a conta do Jangada AI e escolha as organizações.
 5. Numa conversa, escolha o conector em **+ › Mais**.
 
 O Modo desenvolvedor está nos planos Plus, Pro, Business, Enterprise e Edu. Os nomes
@@ -95,7 +97,8 @@ no dashboard. Ele aparece uma vez só; revogue quando não usar mais.
 | `detalhe_trace` | Cada chamada de um trace: modelo, tokens, custo, latência, erro e notas. Input e output só se a organização liberar |
 | `custo_por_usuario` | Ranking de custo por usuário final (o `user_id` que o seu app manda à jangada) |
 
-As ferramentas recebem `projeto` (nome ou id). Com um único projeto liberado, ele é
+As ferramentas recebem `projeto` (nome ou id). Com várias organizações na conexão, use
+`"Org / Projeto"` quando houver nomes repetidos. Com um único projeto liberado, ele é
 usado sozinho. Os períodos aceitam `dias` (janela até agora) ou `de`/`ate` em ISO
 (`2026-09-01`).
 
@@ -113,7 +116,8 @@ No dashboard, o menu **MCP** da sidebar controla o acesso de cada organização:
 - **Input e output das chamadas.** Quando ligado, `detalhe_trace` devolve as mensagens
   enviadas e recebidas do modelo.
 - **Conexões.** Quem conectou, de qual app e quando usou pela última vez, com botão
-  para revogar.
+  para revogar. Revogar na página de uma organização tira só ela da conexão; se a
+  conexão vale para outras organizações, continua funcionando nelas.
 - **Tokens fixos.** Criar e revogar.
 
 Por padrão o MCP vem **ligado em toda organização, com todas as ferramentas**, e o
