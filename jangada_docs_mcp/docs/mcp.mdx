@@ -400,6 +400,13 @@ return {"cliente": c["nome"], "total": sum(p["valor"] for p in peds)}
 - Compensa com **muitas tools** ou fluxos que encadeiam várias chamadas; com 3–4
   tools simples, o modo normal costuma ser mais direto.
 
+## Publicar no jangada Cloud
+
+Para não cuidar de servidor, publique no [jangada Cloud](/docs/cloud): o mesmo arquivo
+Python (funções públicas, `TOOLS`, `AGENT`, `CODE_MODE` ou `APP`) vira uma URL MCP com
+token, login e logs. Também aceita servidores em
+[JavaScript/TypeScript](/docs/js/mcp).
+
 ## O que mudou na 1.9.0
 
 - **Compatível com `mcp` 1.x e 2.x.** O extra `[mcp]` agora aceita `mcp>=1.0,<3`;

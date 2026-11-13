@@ -241,6 +241,14 @@ const h2 = buildMcpHandler(tools, {
 `callTool` only see the tools allowed on the request. With `discovery: false`, the
 catalog in the `execute` description is filtered too (since 1.1.2).
 
+## Publish on jangada Cloud
+
+[jangada Cloud](/docs/cloud) hosts servers in TypeScript and JavaScript: every exported
+`tool()` becomes a tool, `export const tools` narrows it down, `export const codeMode =
+true` turns on Code Mode and `export default { fetch }` serves your own handler. From the
+dashboard editor (one file) or from a repository with `package.json` (the build runs
+`npm install --ignore-scripts` and esbuild).
+
 ## Differences from Python
 
 - In Python, Code Mode runs Python on Monty. Here it runs JavaScript on QuickJS.

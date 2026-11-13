@@ -1,0 +1,134 @@
+---
+title: "jangada Cloud (hospedar servidores MCP)"
+description: "Publique um servidor MCP em Python ou em JavaScript/TypeScript e ganhe uma URL pronta para o Claude, ChatGPT e Cursor. Pelo editor do painel ou a partir de um repositório do GitHub."
+---
+
+O [jangada Cloud](https://app.mcp.jangada.dev.br) hospeda servidores MCP feitos com a
+jangada. Você escreve as ferramentas, publica e recebe uma URL MCP que funciona no
+Claude, no ChatGPT, no Cursor ou no [`MCPClient`](/docs/mcp) da própria jangada. A
+plataforma cuida do protocolo, da URL, da autenticação, dos logs e da escala.
+
+Duas linguagens:
+
+| | Python | JavaScript / TypeScript |
+|---|---|---|
+| Pacote | [`jangada-ai`](/docs/mcp) (PyPI) | [`jangada-ai`](/docs/js/mcp) (npm) |
+| Arquivos | `.py` | `.ts`, `.mts`, `.js`, `.mjs` |
+| Dependências (repositório) | `requirements.txt` / `pyproject.toml` | `package.json` |
+| Build | `pip install` só com wheels | `npm install --ignore-scripts` + esbuild |
+
+A linguagem é escolhida ao criar o servidor (ou detectada pelos arquivos do repositório)
+e não muda depois.
+
+## Duas formas de publicar
+
+- **Editor do painel:** um arquivo só, publicado em segundos. No Python, só o que a
+  imagem já traz; no TypeScript, só `jangada-ai`, `zod` e módulos `node:*`.
+- **Repositório do GitHub:** vários arquivos, dependências e republicação automática a
+  cada push na branch escolhida. Conecte a GitHub App no painel, escolha o repositório e
+  confirme o arquivo principal (entrypoint).
+
+## Python
+
+Toda função pública do arquivo vira uma ferramenta. A docstring é a descrição que o
+modelo lê e as anotações de tipo viram o schema dos parâmetros.
+
+```python
+def buscar_pedido(numero: str, incluir_itens: bool = False) -> dict:
+    """Busca um pedido pelo número. Use quando o cliente citar um número."""
+    return {"numero": numero, "status": "em separação"}
+```
+
+| No arquivo | Efeito |
+|---|---|
+| funções públicas | viram ferramentas (as que começam com `_` ficam de fora) |
+| `TOOLS = [...]` | só as da lista |
+| `AGENT = Agent(...)` | o agente vira a ferramenta `ask` |
+| `CODE_MODE = True` | o cliente vê `search`/`get_schema`/`execute` ([Code Mode](/docs/mcp)) |
+| `APP = <app ASGI>` | a plataforma serve o seu app (ex.: `build_mcp_app` com autenticação própria) |
+
+## JavaScript / TypeScript
+
+Toda ferramenta criada com `tool()` do `jangada-ai` e **exportada** vira uma ferramenta.
+A `description` é o que o modelo lê e o schema do zod vira o schema dos parâmetros.
+
+```ts
+import { tool } from "jangada-ai";
+import { z } from "zod";
+
+export const buscarPedido = tool({
+  name: "buscar_pedido",
+  description: "Busca um pedido pelo número. Use quando o cliente citar um número.",
+  parameters: z.object({ numero: z.string() }),
+  execute: ({ numero }) => ({ numero, status: "em separação" }),
+});
+```
+
+| No arquivo | Efeito |
+|---|---|
+| `export const x = tool({...})` | vira ferramenta (o que não é exportado fica de fora) |
+| `export const tools = [...]` | só as da lista |
+| `export const codeMode = true` | Code Mode (aceita também `{ discovery: false, ... }`) |
+| `export default { fetch }` ou `export const app` | a plataforma serve o seu handler web-standard (ex.: `buildMcpHandler` com autenticação própria) |
+
+Num repositório, o entrypoint pode ficar numa subpasta (`src/index.ts`) e importar outros
+arquivos e pacotes do npm: o build junta tudo num arquivo só com esbuild. `jangada-ai`,
+`zod`, o SDK do MCP e o `quickjs-emscripten` (sandbox do Code Mode) vêm da plataforma, e
+a versão deles no seu `package.json` é ignorada.
+
+O guia dentro do painel (**Como criar**) tem os exemplos de cada caso.
+
+## O que o build confere
+
+Nos dois modos de repositório, cada etapa aparece ao vivo no painel (baixar, auditar,
+instalar, validar, empacotar, enviar, publicar):
+
+- **Instalação sem código de terceiros rodando:** no Python só wheels (sdist executaria
+  `setup.py`); no Node, `npm install --ignore-scripts` (nenhum `postinstall`).
+- **Ambiente limpo:** a instalação e o carregamento do seu código rodam sem o token do
+  GitHub e sem credenciais da plataforma.
+- **Auditoria das dependências:** dependência por git, URL ou arquivo local é recusada;
+  nomes parecidos com pacotes populares geram aviso.
+- **O entrypoint carrega antes de publicar:** erro de sintaxe, import quebrado ou nenhuma
+  ferramenta encontrada falham no build, com a mensagem no painel, e a versão que já estava
+  no ar continua.
+
+No Node, módulos nativos (`.node`) não são suportados.
+
+## Autenticação
+
+Cada servidor escolhe como os clientes provam que podem chamá-lo:
+
+| Modo | Como funciona |
+|---|---|
+| **Token do painel** | cada cliente manda `Authorization: Bearer jmcp_...` (bom para scripts, Claude Code, Cursor) |
+| **Login do jangada** | OAuth da plataforma: só membros da sua organização entram |
+| **OAuth externo** | o login é no servidor OAuth do seu produto; o jangada valida cada token |
+| **Aberto** | o jangada não confere nada; o seu código decide |
+
+Nos modos com login, a identidade de quem chamou chega à ferramenta:
+`current_user()` no Python e `currentUser(ctx)` no JS (veja "Quem chamou" em
+[MCP](/docs/mcp) e [MCP no JS](/docs/js/mcp)).
+
+## Testar local antes de publicar
+
+```python
+# Python (pip install "jangada-ai[mcp]"), no fim do server.py:
+if __name__ == "__main__":
+    from jangada_ai import serve_mcp
+    serve_mcp("teste", tools=[buscar_pedido])   # stdio (Claude Desktop, Cursor)
+```
+
+```ts
+// TypeScript (npm i jangada-ai zod @modelcontextprotocol/sdk)
+import { serveMcp } from "jangada-ai/node";
+import { buscarPedido } from "./server";
+await serveMcp([buscarPedido], { name: "teste", transport: "http", port: 8000 });
+```
+
+## Painel
+
+Além de publicar: versões com rollback, variáveis de ambiente cifradas, logs de cada
+chamada e uso por ferramenta, subdomínio próprio (`<nome>.mcp.jangada.dev.br`) e domínio
+do cliente nos planos pagos. Os limites (servidores, chamadas por mês, timeout) dependem do
+plano da organização.

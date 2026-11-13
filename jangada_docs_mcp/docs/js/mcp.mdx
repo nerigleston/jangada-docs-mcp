@@ -240,6 +240,14 @@ O `toolFilter` também vale dentro do sandbox: `search`, `get_schema` e `callToo
 só enxergam as tools liberadas na requisição. Com `discovery: false`, o catálogo na
 descrição do `execute` também sai filtrado (desde a 1.1.2).
 
+## Publicar no jangada Cloud
+
+O [jangada Cloud](/docs/cloud) hospeda servidores em TypeScript e JavaScript: toda
+`tool()` exportada vira ferramenta, `export const tools` restringe,
+`export const codeMode = true` liga o Code Mode e `export default { fetch }` serve um
+handler próprio. Pelo editor do painel (um arquivo) ou por um repositório com
+`package.json` (o build roda `npm install --ignore-scripts` e esbuild).
+
 ## Diferenças em relação ao Python
 
 - No Python o Code Mode roda Python no Monty. Aqui roda JavaScript no QuickJS.

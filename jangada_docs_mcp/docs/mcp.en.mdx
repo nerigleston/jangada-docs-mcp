@@ -402,6 +402,12 @@ return {"customer": c["name"], "total": sum(o["amount"] for o in orders)}
 - Worth it with **many tools** or flows that chain several calls; with 3–4 simple
   tools, the normal mode is usually more direct.
 
+## Publish on jangada Cloud
+
+To skip running a server, publish on [jangada Cloud](/docs/cloud): the same Python file
+(public functions, `TOOLS`, `AGENT`, `CODE_MODE` or `APP`) becomes an MCP URL with a
+token, login and logs. It also takes servers in [JavaScript/TypeScript](/docs/js/mcp).
+
 ## What changed in 1.9.0
 
 - **Compatible with `mcp` 1.x and 2.x.** The `[mcp]` extra now accepts
