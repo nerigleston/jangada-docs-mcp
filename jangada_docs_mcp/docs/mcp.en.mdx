@@ -335,8 +335,9 @@ app = build_mcp_app("erp", tools=[...], stateless=True, tool_filter=allowed.get)
 A tool outside the list disappears from `tools/list` and is reported as unknown on
 `tools/call`. With `code_mode`, `search`/`get_schema`/`execute` stay visible and the
 filter applies inside them: `search` won't find it, `get_schema` won't describe it and
-the sandbox's `call_tool` refuses it. Use `stateless=True` so each request runs in its
-own context.
+the sandbox's `call_tool` refuses it. With `CodeMode(discovery=False)`, the catalog in
+the `execute` description is filtered too (since 1.14.2). Use `stateless=True` so each
+request runs in its own context.
 
 Likewise, `tool_description=` adjusts each tool's description per request
 (e.g. tenant instructions). It receives `(name, description)` and returns the

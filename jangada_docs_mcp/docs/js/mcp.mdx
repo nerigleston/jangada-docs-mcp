@@ -237,7 +237,8 @@ const h2 = buildMcpHandler(tools, {
 | `quickjs` | Módulo QuickJS já carregado. No Cloudflare Workers, passe um criado com `newQuickJSWASMModuleFromVariant()`. |
 
 O `toolFilter` também vale dentro do sandbox: `search`, `get_schema` e `callTool`
-só enxergam as tools liberadas na requisição.
+só enxergam as tools liberadas na requisição. Com `discovery: false`, o catálogo na
+descrição do `execute` também sai filtrado (desde a 1.1.2).
 
 ## Diferenças em relação ao Python
 
