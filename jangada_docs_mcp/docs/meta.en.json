@@ -37,6 +37,7 @@
     "interactions",
     "guardrails",
     "observability",
+    "observability-mcp",
     "eval",
     "prompts",
     "---Reliability---",

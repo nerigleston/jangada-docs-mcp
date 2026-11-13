@@ -1,0 +1,147 @@
+---
+title: "MCP da observabilidade"
+description: "Consulte custos, métricas e traces do dashboard pelo Claude, ChatGPT, Claude Code ou Cursor. Login com a conta do Jangada AI e controle por organização de quais ferramentas e projetos ficam liberados."
+---
+
+O dashboard de [observabilidade](/docs/observability) tem um servidor MCP próprio.
+Com ele, o seu assistente de IA lê os dados da sua organização e responde perguntas como:
+
+- "Quanto gastei por modelo nos últimos 30 dias, em dólar e em reais?"
+- "Quais usuários finais mais custaram este mês?"
+- "Teve erro ou pico de latência na última hora?"
+- "Me dá o total de traces e o custo médio do projeto Farmácia em outubro."
+
+Todas as ferramentas são **só leitura**: o MCP não altera nada no dashboard.
+
+## URL do servidor
+
+```
+https://observability.mcp.jangada.dev.br/mcp
+```
+
+O login é com a sua conta do Jangada AI (a mesma do `app.jangada.dev.br`). Ao autorizar,
+você escolhe **qual organização** o app vai ler.
+
+## Conectar
+
+### Claude (claude.ai e app desktop)
+
+1. Abra **Configurações › Conectores** e clique em **Adicionar conector personalizado**.
+2. Dê um nome (ex.: *Jangada Observability*) e cole a URL acima.
+3. Clique em **Conectar**. Abre o login do Jangada AI: entre, escolha a organização e autorize.
+4. Numa conversa, ative o conector no menu de ferramentas e faça a pergunta.
+
+Nos planos Team e Enterprise, um admin do Claude adiciona o conector para a equipe e
+cada pessoa faz o próprio login.
+
+### ChatGPT
+
+1. Abra **Configurações › Apps e conectores › Configurações avançadas** e ligue o
+   **Modo desenvolvedor**.
+2. Volte em **Apps e conectores** e clique em **Criar**.
+3. Preencha o nome, cole a URL acima e deixe a autenticação em **OAuth**.
+4. Clique em **Conectar**, entre com a conta do Jangada AI e escolha a organização.
+5. Numa conversa, escolha o conector em **+ › Mais**.
+
+O Modo desenvolvedor está nos planos Plus, Pro, Business, Enterprise e Edu. Os nomes
+dos menus podem mudar conforme a versão do ChatGPT.
+
+### Claude Code
+
+```bash
+claude mcp add --transport http jangada-obs https://observability.mcp.jangada.dev.br/mcp
+```
+
+Depois rode `/mcp` dentro do Claude Code e escolha **Authenticate** para fazer o login
+no navegador.
+
+### Cursor
+
+Em **Cursor Settings › MCP › Add new MCP server**, ou no `~/.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "jangada-obs": {
+      "url": "https://observability.mcp.jangada.dev.br/mcp"
+    }
+  }
+}
+```
+
+O Cursor abre o login do Jangada AI na primeira conexão.
+
+### Clientes sem OAuth (token fixo)
+
+Um OWNER ou ADMIN cria um token em **MCP › Tokens fixos** no dashboard. O cliente
+manda no header:
+
+```
+Authorization: Bearer jomcp_...
+```
+
+O token vale para a organização inteira, com as mesmas ferramentas e projetos liberados
+no dashboard. Ele aparece uma vez só; revogue quando não usar mais.
+
+## Ferramentas
+
+| Ferramenta | O que devolve |
+|------------|---------------|
+| `listar_projetos` | Projetos que o MCP pode ler e a data do último trace de cada um |
+| `metricas` | Custo em dólar e em reais, chamadas, tokens (entrada, saída, raciocínio, cache), taxa de erro, latência p50/p95/p99 e custo por modelo, provider, capacidade e dia |
+| `anomalias` | Taxa de erro da última hora, latência p95 das últimas 24 h e custo de hoje, comparados com a média de 7 dias |
+| `listar_traces` | Traces com os filtros da aba Traces (modelo, provider, status, usuário, sessão, capacidade, período), paginados |
+| `totais_traces` | Totais de **todos** os traces do filtro, sem paginação, com a quebra por dia (o resumo financeiro do período) |
+| `detalhe_trace` | Cada chamada de um trace: modelo, tokens, custo, latência, erro e notas. Input e output só se a organização liberar |
+| `custo_por_usuario` | Ranking de custo por usuário final (o `user_id` que o seu app manda à jangada) |
+
+As ferramentas recebem `projeto` (nome ou id). Com um único projeto liberado, ele é
+usado sozinho. Os períodos aceitam `dias` (janela até agora) ou `de`/`ate` em ISO
+(`2026-09-01`).
+
+O custo em reais usa a PTAX de venda do Banco Central do **dia de cada chamada**
+(horário de Brasília), igual ao dashboard.
+
+## Configurar por organização
+
+No dashboard, o menu **MCP** da sidebar controla o acesso de cada organização:
+
+- **Ligado ou desligado.** Desligar corta na hora todas as conexões e tokens da organização.
+- **Ferramentas liberadas.** Uma ferramenta desmarcada some da lista do assistente e
+  a API recusa a chamada.
+- **Projetos.** Todos (inclusive os criados depois) ou só os escolhidos.
+- **Input e output das chamadas.** Quando ligado, `detalhe_trace` devolve as mensagens
+  enviadas e recebidas do modelo.
+- **Conexões.** Quem conectou, de qual app e quando usou pela última vez, com botão
+  para revogar.
+- **Tokens fixos.** Criar e revogar.
+
+Por padrão o MCP vem **ligado em toda organização, com todas as ferramentas**, e o
+input/output das chamadas vem **desligado**. Só OWNER e ADMIN alteram a configuração;
+qualquer membro pode conectar e revogar a própria conexão.
+
+<Callout type="warn">
+As conversas dos seus usuários podem ter dados pessoais. Ao ligar o input e output, essas
+mensagens passam a ir para o assistente de IA de quem conectar o MCP.
+</Callout>
+
+Mudanças na configuração chegam ao assistente em até 60 segundos.
+
+## Segurança
+
+- O login é OAuth 2.1 com PKCE. O app recebe um token de acesso de 1 hora e um refresh
+  token rotativo de 30 dias. Reapresentar um refresh já usado revoga a autorização inteira.
+- A tela de autorização mostra o **domínio** do app que pediu acesso, que não dá para forjar.
+- Cada chamada confere de novo se o usuário ainda é membro da organização e se a
+  ferramenta e o projeto continuam liberados.
+- O servidor roda no [jangada Cloud](https://app.mcp.jangada.dev.br) no modo OAuth
+  externo, feito com o próprio [`build_mcp_app`](/docs/mcp) da jangada.
+
+## Problemas comuns
+
+| Sintoma | O que fazer |
+|---------|-------------|
+| A organização aparece desabilitada na tela de autorizar | O MCP está desligado nela. Um OWNER ou ADMIN liga em **MCP** no dashboard |
+| "ferramenta desconhecida" | A ferramenta foi desligada na organização (ou a mudança ainda não chegou: espere 1 minuto) |
+| "projeto não encontrado ou não liberado" | O projeto não está na lista do MCP. A mensagem traz os projetos disponíveis |
+| O assistente pede login de novo | A conexão foi revogada, o refresh expirou ou você saiu da organização |

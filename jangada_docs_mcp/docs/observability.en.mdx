@@ -217,18 +217,22 @@ At [app.jangada.dev.br](https://app.jangada.dev.br) you track everything:
 
 - **Traces and detail** — each batch and its observations (provider, model,
   tokens, cost, latency, tool calls and capabilities), as a table or waterfall.
-- **Analytics** — cost, calls, tokens, error rate and latency (p50/p95/p99),
+- **Analytics** — from 24 hours to 12 months, this month, last month or a custom
+  range: cost (in USD and in BRL at each day's PTAX), calls, tokens, error rate and latency (p50/p95/p99),
   broken down by model, provider and capability, plus a daily time series. Cost
   is split into input, output and reasoning, and daily tokens separate input,
   output and reasoning.
 - **Filters and export** — filter by model, provider, errors, dates,
-  userId/sessionId, minimum cost and capability; export to CSV/JSON.
+  userId/sessionId, minimum cost and capability; the cards add up **every** trace
+  in the filter. Export traces to CSV/JSON or the daily financial summary to CSV.
 - **Live tail** — traces in real time, with pause/resume.
 - **Anomalies** — automatic warnings when cost/latency/errors drift from the
   7-day baseline.
 - **Alerts** — daily-cost or error-rate rules.
 - **Scores** — per-trace evaluations (human feedback or LLM-as-judge).
 - **Budget** — monthly cost cap per project, with tracking and projection.
+- **MCP** — query all of this from Claude, ChatGPT or Cursor, with per-organization
+  control of the enabled tools. See [Observability MCP](/docs/observability-mcp).
 
 ## Details
 
