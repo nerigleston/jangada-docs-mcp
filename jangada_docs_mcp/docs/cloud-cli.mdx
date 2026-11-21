@@ -1,0 +1,144 @@
+---
+title: "CLI do jangada Cloud (jcloud)"
+description: "Publique servidores MCP no jangada Cloud pelo terminal: login pelo navegador, deploy da pasta com dependências, variáveis, tokens, logs e CI."
+---
+
+O `jcloud` (pacote npm [`jangada-cloud`](https://www.npmjs.com/package/jangada-cloud))
+publica e gerencia servidores do [jangada Cloud](/docs/cloud) sem abrir o painel. Serve
+para Python e para JavaScript/TypeScript e funciona igual no seu computador e no CI.
+
+```bash
+npm i -g jangada-cloud      # ou npx jangada-cloud <comando>
+jcloud login
+cd meu-servidor
+jcloud deploy
+jcloud connect -c claude-code
+```
+
+Precisa do Node 20.12 ou mais novo (inclusive para servidores em Python: o Node só roda o CLI).
+
+## Login
+
+`jcloud login` abre o painel no navegador. Você confirma e o CLI recebe um token pessoal
+que vale 90 dias. O token não passa pela URL: o navegador devolve só um código de uso
+único, que o CLI troca pelo token (PKCE).
+
+- Máquina sem navegador (SSH): `jcloud login --token` e cole um token criado no painel.
+- Revogar: `jcloud logout` neste computador, ou em **Perfil › Tokens do CLI** no painel.
+- `jcloud whoami` mostra a conta e as organizações. Com mais de uma, escolha a padrão com
+  `jcloud orgs use <nome>` ou passe `--org` em cada comando.
+
+## Deploy
+
+```bash
+jcloud deploy                 # a pasta atual
+jcloud deploy ./servidor      # outra pasta
+jcloud deploy server.py       # um arquivo só, como o editor do painel
+```
+
+| Recebe | O que acontece |
+|--------|----------------|
+| uma pasta | compacta, envia e o build instala as dependências (`requirements.txt`, `pyproject.toml` ou `package.json`) com as mesmas regras do [modo GitHub](/docs/cloud#o-que-o-build-confere) |
+| um arquivo `.py` ou `.ts` | publica o arquivo como versão do editor, sem dependências |
+| servidor ligado ao GitHub | refaz o build do último commit da branch |
+
+O CLI acompanha o build etapa por etapa e termina com a URL e as ferramentas publicadas.
+Se o build falhar, a versão anterior continua no ar e o comando sai com código 1 (bom para CI).
+
+Na primeira vez numa pasta, o CLI pergunta qual servidor usar (ou cria um) e grava o
+`jangada.cloud.json`, que pode ir para o git:
+
+```json
+{ "server": "meu-mcp", "entrypoint": "server.py", "requirements": "requirements.txt" }
+```
+
+O entrypoint é detectado pelos mesmos nomes do painel (`server.py`, `main.py`, `app.py`,
+`server.ts`, `index.ts`…) e segue o contrato da plataforma: em Python, toda função pública
+vira ferramenta (ou `TOOLS`, `AGENT`, `CODE_MODE`, `APP`); em TypeScript,
+`export const tools` (ou `codeMode`, `app`). Para apontar outro arquivo:
+`jcloud deploy --entrypoint src/servidor.py:mcp`.
+
+### O que sobe
+
+Tudo da pasta, menos o que o `.gitignore` e o `.jcloudignore` ignoram, `node_modules`,
+`.venv`, caches e qualquer `.env`. Arquivo `.env` nunca sobe, nem se o `.gitignore`
+mandar incluir: segredo vai por `jcloud env`. Confira antes com `jcloud deploy --dry-run`.
+
+O limite da pasta compactada é 10 MB no plano gratuito e 50 MB no pago.
+
+## Variáveis de ambiente
+
+```bash
+jcloud env                       # nomes (o valor nunca volta)
+jcloud env set API_KEY=sk-... OUTRA=1
+jcloud env unset OUTRA
+jcloud env push .env             # só as que estão no arquivo; --replace apaga as outras
+```
+
+Variável nova vale na próxima publicação. Para aplicar na hora, sem rebuild, passe
+`--apply` (o CLI reaplica a versão que está no ar).
+
+## Versões, logs e uso
+
+```bash
+jcloud deployments               # histórico
+jcloud rollback 3                # volta para a v3 sem rebuild
+jcloud logs -f                   # chamadas ao vivo; --errors, --range 1h|24h|7d, -q busca
+jcloud usage                     # chamadas do mês e limites do plano
+jcloud servers info              # URL, versão no ar, ferramentas
+jcloud open                      # abre o servidor no painel
+```
+
+## Conectar num cliente
+
+```bash
+jcloud connect -c claude-code    # claude mcp add ...
+jcloud connect -c vscode         # code --add-mcp ...
+jcloud connect -c codex
+jcloud connect -c json           # bloco mcpServers (Cursor e outros)
+jcloud connect --new-token       # gera um token do servidor e já põe no comando
+```
+
+No modo Token o comando leva o cabeçalho `Authorization`. Nos modos Login do jangada e
+OAuth externo, o cliente pede login sozinho na primeira conexão.
+
+## CI
+
+Crie um token sem prazo em **Perfil › Tokens do CLI** e guarde como segredo
+`JANGADA_CLOUD_TOKEN`:
+
+```yaml
+# .github/workflows/deploy.yml
+on:
+  push:
+    branches: [main]
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - run: npx jangada-cloud deploy --server meu-mcp -m "${{ github.sha }}"
+        env:
+          JANGADA_CLOUD_TOKEN: ${{ secrets.JANGADA_CLOUD_TOKEN }}
+```
+
+## Referência
+
+| Comando | Para quê |
+|---------|----------|
+| `login [--token]`, `logout`, `whoami` | conta |
+| `orgs`, `orgs use <org>` | organizações |
+| `servers`, `servers info`, `servers create <nome>`, `servers delete <slug>` | servidores |
+| `init` | liga a pasta a um servidor |
+| `deploy [caminho]` | `--entrypoint`, `--requirements`, `-m`, `--no-wait`, `--dry-run` |
+| `deployments`, `rollback <versão>` | versões |
+| `env`, `env set`, `env unset`, `env push` | variáveis (`--apply`) |
+| `tokens`, `tokens create`, `tokens revoke` | tokens `jmcp_` do servidor |
+| `connect` | comando ou bloco para o cliente MCP |
+| `logs`, `usage`, `open` | operação |
+
+Opções globais: `-s, --server <slug>`, `--org <id>`, `--api <url>`, `--json` (saída para scripts).
+Variáveis: `JANGADA_CLOUD_TOKEN`, `JANGADA_CLOUD_ORG`, `JANGADA_CLOUD_API`, `NO_COLOR`.

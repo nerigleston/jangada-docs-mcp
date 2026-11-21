@@ -34,8 +34,10 @@ land in the dashboard with an organization created for you.
 - The free plan includes 2 servers, 10,000 calls per month, 20 seconds per call and 7
   days of logs.
 
-## Two ways to publish
+## Three ways to publish
 
+- **Terminal ([`jcloud`](/docs/cloud-cli)):** `npx jangada-cloud deploy` in the project folder.
+  Several files and dependencies, no repository needed; also works in CI.
 - **Dashboard editor:** a single file, published in seconds. In Python, only what the
   image already ships; in TypeScript, only `jangada-ai`, `zod` and `node:*` modules.
 - **GitHub repository:** several files, dependencies and automatic republishing on every
