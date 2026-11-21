@@ -1,6 +1,6 @@
 ---
 title: "jangada Cloud CLI (jcloud)"
-description: "Publish MCP servers to jangada Cloud from the terminal: browser login, folder deploy with dependencies, variables, tokens, logs and CI."
+description: "Publish MCP servers to jangada Cloud from the terminal: templates, a local server that behaves like the cloud, folder deploy with dependencies, domains, variables, logs and CI."
 ---
 
 `jcloud` (npm package [`jangada-cloud`](https://www.npmjs.com/package/jangada-cloud))
@@ -9,8 +9,10 @@ It works for Python and JavaScript/TypeScript, on your machine and in CI.
 
 ```bash
 npm i -g jangada-cloud      # or npx jangada-cloud <command>
-jcloud login
+jcloud init --template hello-mcp my-server
 cd my-server
+jcloud dev                  # runs locally, like in the cloud
+jcloud login
 jcloud deploy
 jcloud connect -c claude-code
 ```
@@ -27,6 +29,47 @@ returns a one-time code, which the CLI exchanges for the token (PKCE).
 - Revoke: `jcloud logout` on this machine, or **Profile › CLI tokens** in the dashboard.
 - `jcloud whoami` shows your account and organizations. With more than one, pick the default
   with `jcloud orgs use <name>` or pass `--org` on each command.
+
+## Start from a template
+
+```bash
+jcloud templates                            # lists the examples
+jcloud init --template hello-mcp my-server  # creates the folder
+```
+
+| Template | What it shows |
+|----------|---------------|
+| `hello-mcp` | the minimum in Python: public functions become tools |
+| `hello-mcp-ts` | the minimum in TypeScript: an exported `tool()` becomes a tool |
+| `agente-com-llm` | a jangada `Agent` exposed as the `ask` tool |
+| `rag-simples` | search over your own documents |
+| `code-mode` | many tools behind `search`/`get_schema`/`execute` |
+| `app-proprio` | your own ASGI app (`APP`) with its own auth, for Open mode |
+
+`init` never overwrites a file. When the example needs an API key, it ships a
+`.env.example` to copy to `.env`.
+
+## Run locally
+
+```bash
+jcloud dev                    # http://127.0.0.1:8000/mcp
+jcloud dev --port 9000
+jcloud dev --check            # starts, lists the tools and exits (CI)
+```
+
+`jcloud dev` applies the same rules as the cloud (public functions, `TOOLS`, `AGENT`,
+`CODE_MODE`, `APP`; in TS, `tools`, `codeMode`, `app`), shows the tools and reloads
+when a file changes. A code error shows up in the terminal without killing the command:
+fix it and it starts again. The folder's `.env` is loaded only here (in the cloud, use
+`jcloud env`).
+
+- **Python:** uses the project's `.venv`. Without one, [uv](https://docs.astral.sh/uv/)
+  builds the environment with your `requirements.txt` and the same jangada version that
+  runs in the cloud (the one you pin is swapped, as the build does). Without uv, `python3`.
+- **TypeScript:** esbuild bundles the entrypoint like the production build, with the
+  dependencies from the project's `node_modules` (run `npm install` first).
+
+To try it in a client, the command itself prints the `claude mcp add` with the local URL.
 
 ## Deploy
 
@@ -103,6 +146,20 @@ jcloud connect --new-token       # creates a server token and puts it in the com
 In Token mode the command carries the `Authorization` header. In jangada Login and
 external OAuth modes, the client asks for login by itself on the first connection.
 
+## Domains
+
+```bash
+jcloud domains                          # short address and custom domains
+jcloud domains add mcp.yourcompany.com
+jcloud domains --watch                  # follows until ACTIVE
+jcloud domains remove mcp.yourcompany.com
+```
+
+Every server has the short address `https://<slug>.mcp.jangada.dev.br/mcp`. A custom
+domain is a paid plan feature: `add` shows a CNAME that proves the domain is yours
+(VALIDANDO), then a second CNAME that routes traffic to jangada (APONTANDO), and the
+address starts answering (ATIVO).
+
 ## CI
 
 Create a non-expiring token in **Profile › CLI tokens** and store it as the
@@ -133,12 +190,14 @@ jobs:
 | `login [--token]`, `logout`, `whoami` | account |
 | `orgs`, `orgs use <org>` | organizations |
 | `servers`, `servers info`, `servers create <name>`, `servers delete <slug>` | servers |
-| `init` | links the folder to a server |
+| `init`, `init --template <name> [folder]`, `templates` | links the folder to a server or creates one from an example |
+| `dev [folder]` | runs locally: `--port`, `--check`, `--no-watch`, `--python` |
 | `deploy [path]` | `--entrypoint`, `--requirements`, `-m`, `--no-wait`, `--dry-run` |
 | `deployments`, `rollback <version>` | versions |
 | `env`, `env set`, `env unset`, `env push` | variables (`--apply`) |
 | `tokens`, `tokens create`, `tokens revoke` | server `jmcp_` tokens |
 | `connect` | command or block for the MCP client |
+| `domains`, `domains add`, `domains remove` | short address and custom domain |
 | `logs`, `usage`, `open` | operations |
 
 Global options: `-s, --server <slug>`, `--org <id>`, `--api <url>`, `--json` (script output).
