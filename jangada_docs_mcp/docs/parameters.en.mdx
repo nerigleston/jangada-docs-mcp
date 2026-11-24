@@ -48,9 +48,9 @@ this in `profiles.py`, **per model**, without you needing to know:
 
 - `gpt-5` **and later** (`gpt-5.x`, `gpt-6-*`…, except the `*-chat-*` ones) rejects
   `temperature` (HTTP 400) and requires `max_completion_tokens`.
-- `gemini-3.x` discards `temperature`/`top_p`/`top_k`.
+- `gemini-3.x` **and up** (including `gemini-4-argon`) discards `temperature`/`top_p`/`top_k`.
 - **Gemini thinking**: you pass only `thinking_budget` (or `thinking_level`) and
-  the library adapts — on 2.5 it becomes `thinking_budget`, on 3.x it becomes
+  the library adapts — on 2.5 it becomes `thinking_budget`, on 3.x and up (including Gemini 4) it becomes
   `thinking_level` —, wrapping it in the native `thinking_config`. See
   [Gemini](/en/docs/llm-gemini).
 
